@@ -125,17 +125,31 @@ end
 
 local function fitMonitor(frame)
 	local position = positions[frame:GetName()]
-	if not spanned or not position or not isMaximized(frame) or isLocked(frame) then
+	if not spanned or not position or isLocked(frame) then
 		return
 	end
 	local monitorFrame = monitorFrames[position.monitor]
-	local scale = monitorFrame:GetEffectiveScale() / frame:GetEffectiveScale()
+	local scale = monitorFrame:GetEffectiveScale() / frame:GetParent():GetEffectiveScale()
 	local width, height = frame:GetSize()
-	local fit = math.min(monitorFrame:GetWidth() * scale / width, monitorFrame:GetHeight() * scale / height)
-	frame:SetSize(width * fit, height * fit)
-	frame:OnFrameSizeChanged()
-	frame.BlackoutFrame:SetShown(position.monitor == layout.main)
+	frame:SetScale(math.min(monitorFrame:GetWidth() * scale / width, monitorFrame:GetHeight() * scale / height))
 	restore(frame)
+end
+
+local function clearFit(frame)
+	if isLocked(frame) then
+		return
+	end
+	frame:SetScale(1)
+	restore(frame)
+end
+
+local function keepMainMonitorVisible(frame)
+	frame.BlackoutFrame:HookScript("OnShow", function(blackout)
+		local position = positions[frame:GetName()]
+		if spanned and position and position.monitor ~= layout.main then
+			blackout:Hide()
+		end
+	end)
 end
 
 local function adopt(frame)
@@ -147,7 +161,8 @@ local function adopt(frame)
 	hooksecurefunc(frame, "SetPoint", restore)
 	if frame.UpdateMaximizedSize then
 		hooksecurefunc(frame, "UpdateMaximizedSize", fitMonitor)
-		hooksecurefunc(frame, "Maximize", fitMonitor)
+		hooksecurefunc(frame, "Minimize", clearFit)
+		keepMainMonitorVisible(frame)
 	end
 end
 
@@ -165,9 +180,13 @@ local function takesClicks(frame)
 	return frame:GetObjectType() ~= "Frame" or frame:GetScript("OnMouseDown") or frame:GetScript("OnMouseUp")
 end
 
+local function fillsUI(frame)
+	return frame:GetWidth() == UIParent:GetWidth() and frame:GetHeight() == UIParent:GetHeight()
+end
+
 local function windowOf(frame)
 	local parent = frame:GetParent()
-	while parent and parent ~= UIParent do
+	while parent and not fillsUI(parent) do
 		frame = parent
 		parent = frame:GetParent()
 	end
@@ -218,7 +237,7 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		return
 	end
 	local focus = GetMouseFoci()[1]
-	if not focus or takesClicks(focus) then
+	if not focus or focus:IsForbidden() or takesClicks(focus) then
 		return
 	end
 	local frame = windowOf(focus)
@@ -268,6 +287,22 @@ hooksecurefunc(InputUtil, "AnchorRegionToCursor", function(region, point)
 	local scale = UIParent:GetEffectiveScale()
 	region:ClearAllPoints()
 	region:SetPoint(point, UIParent, "BOTTOMLEFT", x / scale - UIParent:GetLeft(), y / scale - UIParent:GetBottom())
+end)
+
+hooksecurefunc(getmetatable(GameTooltip).__index, "SetOwner", function(tooltip)
+	if not spanned or fullWidth or tooltip:IsForbidden() or tooltip:IsMovable() then
+		return
+	end
+	local screenScale = screenFrame:GetEffectiveScale()
+	local x, y = GetCursorPosition()
+	local monitor = layout.monitors[nearestMonitor(x / screenScale, layout.height - y / screenScale)]
+	local scale = screenScale / tooltip:GetEffectiveScale()
+	tooltip:SetClampRectInsets(
+		-monitor.x * scale,
+		(layout.width - monitor.x - monitor.width) * scale,
+		monitor.y * scale,
+		(monitor.y + monitor.height - layout.height) * scale
+	)
 end)
 
 SLASH_FSMRESET1 = "/fsmreset"
