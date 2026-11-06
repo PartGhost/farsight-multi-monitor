@@ -263,6 +263,13 @@ end)
 
 applyViewport()
 
+hooksecurefunc(InputUtil, "AnchorRegionToCursor", function(region, point)
+	local x, y = GetCursorPosition()
+	local scale = UIParent:GetEffectiveScale()
+	region:ClearAllPoints()
+	region:SetPoint(point, UIParent, "BOTTOMLEFT", x / scale - UIParent:GetLeft(), y / scale - UIParent:GetBottom())
+end)
+
 SLASH_FSMRESET1 = "/fsmreset"
 SlashCmdList.FSMRESET = function()
 	wipe(positions)
