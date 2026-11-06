@@ -206,7 +206,7 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		return
 	end
 	local _, explicitlyProtected = frame:IsProtected()
-	if explicitlyProtected or isLocked(frame) or isMaximized(frame) then
+	if explicitlyProtected or frame.system or isLocked(frame) or isMaximized(frame) then
 		return
 	end
 	adopt(frame)
