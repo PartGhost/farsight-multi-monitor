@@ -1,0 +1,460 @@
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+static class Farsight
+{
+	const string Title = "Farsight";
+	const string AddonFolder = @"Interface\AddOns\FarsightMultiMonitor";
+	const string LayoutFile = AddonFolder + @"\Layout.lua";
+	const string InstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\World of Warcraft";
+	const string InstallLocationValue = "InstallLocation";
+	const string GamePattern = "Wow*.exe";
+	const string ConfigFile = @"WTF\Config.wtf";
+	const string EnterWorldMarker = @"WTF\SavedVariables\Blizzard_GlueSavedVariables.lua";
+	const string WindowedSetting = "SET GxMaximize \"0\"";
+	const string StartupKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+	const int MaxWindowSize = 16384;
+	const double SplitMinAspect = 3.0;
+	const int GameAspectWidth = 16;
+	const int GameAspectHeight = 9;
+
+	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
+	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+	static readonly TimeSpan SettleTimeout = TimeSpan.FromSeconds(20);
+	static readonly TimeSpan SettledAfter = TimeSpan.FromSeconds(3);
+	static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+	static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(2);
+
+	const int GWL_STYLE = -16;
+	const long WS_MAXIMIZE = 0x01000000;
+	const long WS_CAPTION = 0x00C00000;
+	const long WS_THICKFRAME = 0x00040000;
+	const long Decorations = WS_MAXIMIZE | WS_CAPTION | WS_THICKFRAME;
+	const int GWL_EXSTYLE = -20;
+	const long WS_EX_TOOLWINDOW = 0x00000080;
+	const long WS_EX_TOPMOST = 0x00000008;
+	const uint SWP_NOSIZE = 0x0001;
+	const uint SWP_NOMOVE = 0x0002;
+	const uint SWP_NOZORDER = 0x0004;
+	const uint SWP_NOACTIVATE = 0x0010;
+	const uint SWP_FRAMECHANGED = 0x0020;
+	const uint SWP_NOSENDCHANGING = 0x0400;
+	const uint GW_OWNER = 4;
+	const uint EVENT_SYSTEM_FOREGROUND = 3;
+	const uint WINEVENT_OUTOFCONTEXT = 0;
+	const int DWMWA_CLOAKED = 14;
+	static readonly IntPtr PerMonitorAwareV2 = new IntPtr(-4);
+	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+	static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+	static readonly string[] DesktopClasses = { "Progman", "WorkerW" };
+
+	delegate void ForegroundCallback(IntPtr hook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time);
+	delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+
+	static readonly ForegroundCallback OnForeground = HandleForeground;
+	static IntPtr spannedWindow;
+
+	[StructLayout(LayoutKind.Sequential)]
+	struct RECT
+	{
+		public int Left, Top, Right, Bottom;
+	}
+
+	[DllImport("user32.dll")]
+	static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
+
+	[DllImport("user32.dll")]
+	static extern bool GetWindowRect(IntPtr window, out RECT rect);
+
+	[DllImport("user32.dll")]
+	static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr module, ForegroundCallback callback, uint process, uint thread, uint flags);
+
+	[DllImport("user32.dll")]
+	static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
+
+	[DllImport("user32.dll")]
+	static extern bool IsWindowVisible(IntPtr window);
+
+	[DllImport("user32.dll")]
+	static extern bool IsIconic(IntPtr window);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr GetWindow(IntPtr window, uint command);
+
+	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	static extern int GetClassName(IntPtr window, StringBuilder name, int capacity);
+
+	[DllImport("dwmapi.dll")]
+	static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+
+	[STAThread]
+	static void Main()
+	{
+		SetProcessDpiAwarenessContext(PerMonitorAwareV2);
+
+		if (!string.Equals(Application.ExecutablePath, InstalledPath, StringComparison.OrdinalIgnoreCase))
+		{
+			Install();
+			return;
+		}
+
+		bool firstInstance;
+		using (new Mutex(true, Title, out firstInstance))
+		{
+			if (!firstInstance)
+				return;
+			using (var key = Registry.CurrentUser.CreateSubKey(StartupKey))
+				key.SetValue(Title, "\"" + InstalledPath + "\"");
+			new Thread(WatchForeground) { IsBackground = true }.Start();
+			while (true)
+				RunSession();
+		}
+	}
+
+	static void Install()
+	{
+		var self = Process.GetCurrentProcess().Id;
+		foreach (var running in Process.GetProcessesByName(Title).Where(process => process.Id != self))
+		{
+			running.Kill();
+			running.WaitForExit();
+		}
+		Directory.CreateDirectory(Path.GetDirectoryName(InstalledPath));
+		File.WriteAllBytes(InstalledPath, File.ReadAllBytes(Application.ExecutablePath));
+		Process.Start(InstalledPath);
+		Tell(GameDirs().Any()
+			? "Farsight is set up. Start WoW as usual. You can delete this download."
+			: "Farsight is set up, but it can't find WoW with the Farsight Multi-Monitor addon installed. Install the addon and it will pick it up.");
+	}
+
+	static string[] GameDirs()
+	{
+		using (var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
+		using (var install = machine.OpenSubKey(InstallKey))
+		{
+			var root = install == null ? null : install.GetValue(InstallLocationValue) as string;
+			if (!Directory.Exists(root))
+				return new string[0];
+			return Directory.GetDirectories(root).Where(dir => Directory.Exists(Path.Combine(dir, AddonFolder))).ToArray();
+		}
+	}
+
+	static void WatchForeground()
+	{
+		SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, OnForeground, 0, 0, WINEVENT_OUTOFCONTEXT);
+		Application.Run();
+	}
+
+	static void HandleForeground(IntPtr hook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time)
+	{
+		if (window == Volatile.Read(ref spannedWindow))
+			RaiseSideWindows(window);
+	}
+
+	static void RaiseSideWindows(IntPtr game)
+	{
+		var sideWindows = new System.Collections.Generic.List<IntPtr>();
+		EnumWindows((window, parameter) =>
+		{
+			if (window != game && IsAppWindow(window) && !IsOnMonitor(window, Screen.PrimaryScreen))
+				sideWindows.Add(window);
+			return true;
+		}, IntPtr.Zero);
+		sideWindows.Reverse();
+		foreach (var window in sideWindows)
+		{
+			SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+			SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+		}
+	}
+
+	static bool IsOnMonitor(IntPtr window, Screen screen)
+	{
+		return Screen.FromHandle(window).DeviceName == screen.DeviceName;
+	}
+
+	static bool IsAppWindow(IntPtr window)
+	{
+		if (!IsWindowVisible(window) || IsIconic(window) || GetWindow(window, GW_OWNER) != IntPtr.Zero)
+			return false;
+		var exStyle = GetWindowLongPtr(window, GWL_EXSTYLE).ToInt64();
+		if ((exStyle & (WS_EX_TOOLWINDOW | WS_EX_TOPMOST)) != 0)
+			return false;
+		int cloaked;
+		if (DwmGetWindowAttribute(window, DWMWA_CLOAKED, out cloaked, sizeof(int)) == 0 && cloaked != 0)
+			return false;
+		var className = new StringBuilder(64);
+		GetClassName(window, className, className.Capacity);
+		return !DesktopClasses.Contains(className.ToString());
+	}
+
+	static void HoldUntilExit(Process game)
+	{
+		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
+		RaiseSideWindows(game.MainWindowHandle);
+		game.WaitForExit();
+		Volatile.Write(ref spannedWindow, IntPtr.Zero);
+	}
+
+	static void RunSession()
+	{
+		string gameDir;
+		var game = FindGame(out gameDir);
+		if (game != null)
+		{
+			JoinRunning(game, gameDir);
+			return;
+		}
+		while (game == null)
+		{
+			foreach (var dir in GameDirs())
+				SetWindowed(dir);
+			Thread.Sleep(IdleInterval);
+			game = FindGame(out gameDir);
+		}
+		StartFresh(game, gameDir);
+	}
+
+	static string WithWindowedSetting(string config)
+	{
+		return MaximizeSetting.IsMatch(config) ? MaximizeSetting.Replace(config, WindowedSetting) : config + WindowedSetting + "\n";
+	}
+
+	static void SetWindowed(string gameDir)
+	{
+		var configPath = Path.Combine(gameDir, ConfigFile);
+		if (!File.Exists(configPath))
+			return;
+		try
+		{
+			var config = File.ReadAllText(configPath);
+			var windowed = WithWindowedSetting(config);
+			if (windowed != config)
+				File.WriteAllText(configPath, windowed);
+		}
+		catch (IOException)
+		{
+			return;
+		}
+	}
+
+	static void StartFresh(Process game, string gameDir)
+	{
+		var span = WriteLayout(gameDir);
+		var markerPath = Path.Combine(gameDir, EnterWorldMarker);
+		var marker = File.GetLastWriteTimeUtc(markerPath);
+
+		if (!Settle(game, Screen.PrimaryScreen.Bounds))
+			TellResizing();
+
+		while (!game.HasExited && File.GetLastWriteTimeUtc(markerPath) == marker)
+			Thread.Sleep(PollInterval);
+
+		if (!Settle(game, span))
+			TellResizing();
+		HoldUntilExit(game);
+	}
+
+	static void JoinRunning(Process game, string gameDir)
+	{
+		var configPath = Path.Combine(gameDir, ConfigFile);
+		if (File.Exists(configPath))
+		{
+			var config = File.ReadAllText(configPath);
+			if (WithWindowedSetting(config) != config)
+			{
+				Tell("Close WoW and it will switch to Windowed mode by itself next time it starts.");
+				game.WaitForExit();
+				return;
+			}
+		}
+
+		var layoutPath = Path.Combine(gameDir, LayoutFile);
+		var previous = File.ReadAllText(layoutPath);
+		var span = WriteLayout(gameDir);
+		if (!Settle(game, span))
+			TellResizing();
+		else if (File.ReadAllText(layoutPath) != previous)
+			Tell("Your monitor layout changed. Type /reload in WoW to pick it up.");
+		HoldUntilExit(game);
+	}
+
+	static void TellResizing()
+	{
+		Tell("WoW keeps resizing its window. Set Display Mode to Windowed in the graphics options.");
+	}
+
+	static void Tell(string message)
+	{
+		MessageBox.Show(message, Title, MessageBoxButtons.OK, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1, MessageBoxOptions.DefaultDesktopOnly);
+	}
+
+	static Rectangle WriteLayout(string gameDir)
+	{
+		Rectangle window;
+		var text = BuildLayout(Screen.AllScreens.Select(screen => screen.Bounds).ToArray(), Screen.PrimaryScreen.Bounds, out window);
+		File.WriteAllText(Path.Combine(gameDir, LayoutFile), text);
+		return window;
+	}
+
+	static string BuildLayout(Rectangle[] screens, Rectangle primary, out Rectangle window)
+	{
+		var monitors = CoveredMonitors(screens, primary);
+		var main = primary;
+		var split = monitors.Length == 1 && (double)primary.Width / primary.Height >= SplitMinAspect;
+		if (split)
+		{
+			var gameWidth = primary.Height * GameAspectWidth / GameAspectHeight;
+			var sideWidth = (primary.Width - gameWidth) / 2;
+			main = new Rectangle(primary.X + sideWidth, primary.Y, gameWidth, primary.Height);
+			monitors = new[]
+			{
+				new Rectangle(primary.X, primary.Y, sideWidth, primary.Height),
+				main,
+				Rectangle.FromLTRB(main.Right, primary.Top, primary.Right, primary.Bottom),
+			};
+		}
+		window = WindowBounds(monitors, main);
+
+		var ordered = monitors.OrderBy(monitor => monitor.X).ThenBy(monitor => monitor.Y).ToArray();
+		var text = new StringBuilder();
+		text.Append("local _, ns = ...\n\n");
+		text.Append("ns.layout = {\n");
+		text.AppendFormat("\twidth = {0},\n", window.Width);
+		text.AppendFormat("\theight = {0},\n", window.Height);
+		text.AppendFormat("\tmain = {0},\n", Array.IndexOf(ordered, main) + 1);
+		if (split)
+			text.Append("\tsplit = true,\n");
+		text.Append("\tmonitors = {\n");
+		foreach (var monitor in ordered)
+			text.AppendFormat("\t\t{{ x = {0}, y = {1}, width = {2}, height = {3} }},\n", monitor.X - window.X, monitor.Y - window.Y, monitor.Width, monitor.Height);
+		text.Append("\t},\n");
+		text.Append("}\n");
+		return text.ToString();
+	}
+
+	static Rectangle[] CoveredMonitors(Rectangle[] screens, Rectangle main)
+	{
+		var covered = main;
+		var result = new System.Collections.Generic.List<Rectangle> { main };
+		foreach (var screen in screens.Where(screen => screen != main).OrderBy(screen => DistanceSquared(screen, main)))
+		{
+			var grown = Rectangle.Union(covered, screen);
+			if (grown.Width > MaxWindowSize || grown.Height > MaxWindowSize)
+				continue;
+			covered = grown;
+			result.Add(screen);
+		}
+		return result.ToArray();
+	}
+
+	static long DistanceSquared(Rectangle a, Rectangle b)
+	{
+		long deltaX = a.X + a.Width / 2 - (b.X + b.Width / 2);
+		long deltaY = a.Y + a.Height / 2 - (b.Y + b.Height / 2);
+		return deltaX * deltaX + deltaY * deltaY;
+	}
+
+	static Rectangle WindowBounds(Rectangle[] monitors, Rectangle main)
+	{
+		var union = monitors.Aggregate(Rectangle.Union);
+		var centerX = main.X + main.Width / 2;
+		var centerY = main.Y + main.Height / 2;
+		var halfWidth = Math.Max(centerX - union.Left, union.Right - centerX);
+		var halfHeight = Math.Max(centerY - union.Top, union.Bottom - centerY);
+		if (halfWidth * 2 > MaxWindowSize || halfHeight * 2 > MaxWindowSize)
+			return union;
+		return new Rectangle(centerX - halfWidth, centerY - halfHeight, halfWidth * 2, halfHeight * 2);
+	}
+
+	static Process FindGame(out string gameDir)
+	{
+		foreach (var dir in GameDirs())
+		{
+			var game = Directory.GetFiles(dir, GamePattern)
+				.SelectMany(path => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(path)).Where(process => RunsFrom(process, path)))
+				.FirstOrDefault(process => process.MainWindowHandle != IntPtr.Zero);
+			if (game != null)
+			{
+				gameDir = dir;
+				return game;
+			}
+		}
+		gameDir = null;
+		return null;
+	}
+
+	static bool RunsFrom(Process process, string path)
+	{
+		try
+		{
+			return string.Equals(process.MainModule.FileName, path, StringComparison.OrdinalIgnoreCase);
+		}
+		catch (Win32Exception)
+		{
+			return false;
+		}
+		catch (InvalidOperationException)
+		{
+			return false;
+		}
+	}
+
+	static bool Settle(Process game, Rectangle bounds)
+	{
+		var window = game.MainWindowHandle;
+		var total = Stopwatch.StartNew();
+		var settled = Stopwatch.StartNew();
+		while (total.Elapsed < SettleTimeout)
+		{
+			if (game.HasExited)
+				return true;
+			if (!IsPlaced(window, bounds))
+			{
+				Place(window, bounds);
+				settled.Restart();
+			}
+			else if (settled.Elapsed >= SettledAfter)
+			{
+				return true;
+			}
+			Thread.Sleep(PollInterval);
+		}
+		return false;
+	}
+
+	static bool IsPlaced(IntPtr window, Rectangle bounds)
+	{
+		RECT rect;
+		GetWindowRect(window, out rect);
+		var style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
+		return (style & Decorations) == 0 && Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom) == bounds;
+	}
+
+	static void Place(IntPtr window, Rectangle bounds)
+	{
+		var style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
+		SetWindowLongPtr(window, GWL_STYLE, new IntPtr(style & ~Decorations));
+		SetWindowPos(window, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOSENDCHANGING);
+	}
+}
