@@ -24,6 +24,7 @@ static class Farsight
 	const string WindowedSetting = "SET GxMaximize \"0\"";
 	const string StartupKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 	const int MaxWindowSize = 16384;
+	const int MaxPathLength = 32767;
 	const double SplitMinAspect = 3.0;
 	const int GameAspectWidth = 16;
 	const int GameAspectHeight = 9;
@@ -54,6 +55,8 @@ static class Farsight
 	const uint EVENT_SYSTEM_FOREGROUND = 3;
 	const uint WINEVENT_OUTOFCONTEXT = 0;
 	const int DWMWA_CLOAKED = 14;
+	const uint MONITOR_DEFAULTTOPRIMARY = 1;
+	const uint MONITOR_DEFAULTTONEAREST = 2;
 	static readonly IntPtr PerMonitorAwareV2 = new IntPtr(-4);
 	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 	static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
@@ -61,6 +64,7 @@ static class Farsight
 
 	delegate void ForegroundCallback(IntPtr hook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time);
 	delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+	delegate bool MonitorCallback(IntPtr monitor, IntPtr dc, ref RECT bounds, IntPtr parameter);
 
 	static readonly ForegroundCallback OnForeground = HandleForeground;
 	static IntPtr spannedWindow;
@@ -91,6 +95,18 @@ static class Farsight
 
 	[DllImport("user32.dll")]
 	static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
+
+	[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+	static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int length);
+
+	[DllImport("user32.dll")]
+	static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr parameter);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr MonitorFromPoint(Point point, uint flags);
 
 	[DllImport("user32.dll")]
 	static extern bool IsWindowVisible(IntPtr window);
@@ -173,10 +189,11 @@ static class Farsight
 
 	static void RaiseSideWindows(IntPtr game)
 	{
+		var primary = MonitorFromPoint(Point.Empty, MONITOR_DEFAULTTOPRIMARY);
 		var sideWindows = new System.Collections.Generic.List<IntPtr>();
 		EnumWindows((window, parameter) =>
 		{
-			if (window != game && IsAppWindow(window) && !IsOnMonitor(window, Screen.PrimaryScreen))
+			if (window != game && IsAppWindow(window) && MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) != primary)
 				sideWindows.Add(window);
 			return true;
 		}, IntPtr.Zero);
@@ -188,9 +205,20 @@ static class Farsight
 		}
 	}
 
-	static bool IsOnMonitor(IntPtr window, Screen screen)
+	static Rectangle[] MonitorBounds()
 	{
-		return Screen.FromHandle(window).DeviceName == screen.DeviceName;
+		var monitors = new System.Collections.Generic.List<Rectangle>();
+		EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr monitor, IntPtr dc, ref RECT bounds, IntPtr parameter) =>
+		{
+			monitors.Add(Rectangle.FromLTRB(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom));
+			return true;
+		}, IntPtr.Zero);
+		return monitors.ToArray();
+	}
+
+	static Rectangle PrimaryBounds(Rectangle[] monitors)
+	{
+		return monitors.First(monitor => monitor.Location == Point.Empty);
 	}
 
 	static bool IsAppWindow(IntPtr window)
@@ -222,7 +250,7 @@ static class Farsight
 		var game = FindGame(out gameDir);
 		if (game != null)
 		{
-			Tell("Close WoW and start it again so Farsight can set it up.");
+			new Thread(() => Tell("Close WoW and start it again so Farsight can set it up.")) { IsBackground = true }.Start();
 			game.WaitForExit();
 			return;
 		}
@@ -265,7 +293,7 @@ static class Farsight
 		var markerPath = Path.Combine(gameDir, EnterWorldMarker);
 		var marker = File.GetLastWriteTimeUtc(markerPath);
 
-		if (!Settle(game, Screen.PrimaryScreen.Bounds))
+		if (!Settle(game, PrimaryBounds(MonitorBounds())))
 			TellResizing();
 
 		while (!game.HasExited && File.GetLastWriteTimeUtc(markerPath) == marker)
@@ -289,7 +317,8 @@ static class Farsight
 	static Rectangle WriteLayout(string gameDir)
 	{
 		Rectangle window;
-		var text = BuildLayout(Screen.AllScreens.Select(screen => screen.Bounds).ToArray(), Screen.PrimaryScreen.Bounds, out window);
+		var monitors = MonitorBounds();
+		var text = BuildLayout(monitors, PrimaryBounds(monitors), out window);
 		File.WriteAllText(Path.Combine(gameDir, LayoutFile), text);
 		return window;
 	}
@@ -383,9 +412,11 @@ static class Farsight
 
 	static bool RunsFrom(Process process, string path)
 	{
+		var image = new StringBuilder(MaxPathLength);
+		var length = image.Capacity;
 		try
 		{
-			return string.Equals(process.MainModule.FileName, path, StringComparison.OrdinalIgnoreCase);
+			return QueryFullProcessImageName(process.Handle, 0, image, ref length) && string.Equals(image.ToString(), path, StringComparison.OrdinalIgnoreCase);
 		}
 		catch (Win32Exception)
 		{
