@@ -10,6 +10,7 @@ local DROP_MARGIN = 40
 local PARKED_FRAMES = { "CompactRaidFrameManager" }
 local UI_HEIGHT = 768
 local MIN_AUTO_SCALE = 0.64
+local WORLD_TEXT_CVAR = "WorldTextScale_v2"
 
 local screenFrame = CreateFrame("Frame")
 screenFrame:SetAllPoints()
@@ -60,6 +61,20 @@ local function mainMonitorScale()
 	return math.min(1, math.max(MIN_AUTO_SCALE, UI_HEIGHT / mainMonitor.height))
 end
 
+local function applyWorldTextScale(onMain)
+	local saved = FarsightMultiMonitorDB
+	if not saved then
+		return
+	end
+	local current = GetCVar(WORLD_TEXT_CVAR)
+	if current ~= saved.appliedWorldText and current ~= saved.playerWorldText then
+		saved.playerWorldText = current
+	end
+	local windowRatio = onMain and math.max(layout.width / mainMonitor.width, layout.height / mainMonitor.height) or 1
+	SetCVar(WORLD_TEXT_CVAR, tonumber(saved.playerWorldText) / windowRatio)
+	saved.appliedWorldText = GetCVar(WORLD_TEXT_CVAR)
+end
+
 local function applyViewport()
 	local width, height = GetPhysicalScreenSize()
 	spanned = width == layout.width and height == layout.height
@@ -76,6 +91,7 @@ local function applyViewport()
 	if onMain then
 		UIParent:SetScale(mainMonitorScale() * mainMonitor.height / layout.height)
 	end
+	applyWorldTextScale(onMain)
 	for _, name in ipairs(PARKED_FRAMES) do
 		local parked = _G[name]
 		if parked then
@@ -192,6 +208,10 @@ end
 handlers.PLAYER_ENTERING_WORLD = applyViewport
 handlers.PLAYER_REGEN_ENABLED = applyViewport
 handlers.UI_SCALE_CHANGED = applyViewport
+
+function handlers.PLAYER_LOGOUT()
+	SetCVar(WORLD_TEXT_CVAR, FarsightMultiMonitorDB.playerWorldText)
+end
 
 function handlers.GLOBAL_MOUSE_DOWN(button)
 	if not spanned or button ~= "LeftButton" then
