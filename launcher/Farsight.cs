@@ -21,6 +21,8 @@ static class Farsight
 	const string GamePattern = "Wow*.exe";
 	const string ConfigFile = @"WTF\Config.wtf";
 	const string EnterWorldMarker = @"WTF\SavedVariables\Blizzard_GlueSavedVariables.lua";
+	const string AccountsFolder = @"WTF\Account";
+	const string CharacterListFile = "character-list-order.txt";
 	const string WindowedSetting = "SET GxMaximize \"0\"";
 	const string StartupKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 	const int MaxWindowSize = 16384;
@@ -236,12 +238,21 @@ static class Farsight
 		return !DesktopClasses.Contains(className.ToString());
 	}
 
-	static void HoldUntilExit(Process game)
+	static void HoldUntilLogout(Process game, string gameDir)
 	{
 		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
 		RaiseSideWindows(game.MainWindowHandle);
-		game.WaitForExit();
+		var characterList = CharacterListWritten(gameDir);
+		while (!game.HasExited && CharacterListWritten(gameDir) == characterList)
+			Thread.Sleep(PollInterval);
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
+	}
+
+	static DateTime CharacterListWritten(string gameDir)
+	{
+		return Directory.GetDirectories(Path.Combine(gameDir, AccountsFolder))
+			.Select(account => File.GetLastWriteTimeUtc(Path.Combine(account, CharacterListFile)))
+			.Max();
 	}
 
 	static void RunSession()
@@ -261,7 +272,8 @@ static class Farsight
 			Thread.Sleep(IdleInterval);
 			game = FindGame(out gameDir);
 		}
-		StartFresh(game, gameDir);
+		while (!game.HasExited)
+			PlayOnce(game, gameDir);
 	}
 
 	static string WithWindowedSetting(string config)
@@ -287,7 +299,7 @@ static class Farsight
 		}
 	}
 
-	static void StartFresh(Process game, string gameDir)
+	static void PlayOnce(Process game, string gameDir)
 	{
 		var span = WriteLayout(gameDir);
 		var markerPath = Path.Combine(gameDir, EnterWorldMarker);
@@ -301,7 +313,7 @@ static class Farsight
 
 		if (!Settle(game, span))
 			TellResizing();
-		HoldUntilExit(game);
+		HoldUntilLogout(game, gameDir);
 	}
 
 	static void TellResizing()
