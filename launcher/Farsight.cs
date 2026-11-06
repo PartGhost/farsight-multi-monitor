@@ -222,7 +222,8 @@ static class Farsight
 		var game = FindGame(out gameDir);
 		if (game != null)
 		{
-			JoinRunning(game, gameDir);
+			Tell("Close WoW and start it again so Farsight can set it up.");
+			game.WaitForExit();
 			return;
 		}
 		while (game == null)
@@ -272,30 +273,6 @@ static class Farsight
 
 		if (!Settle(game, span))
 			TellResizing();
-		HoldUntilExit(game);
-	}
-
-	static void JoinRunning(Process game, string gameDir)
-	{
-		var configPath = Path.Combine(gameDir, ConfigFile);
-		if (File.Exists(configPath))
-		{
-			var config = File.ReadAllText(configPath);
-			if (WithWindowedSetting(config) != config)
-			{
-				Tell("Close WoW and it will switch to Windowed mode by itself next time it starts.");
-				game.WaitForExit();
-				return;
-			}
-		}
-
-		var layoutPath = Path.Combine(gameDir, LayoutFile);
-		var previous = File.ReadAllText(layoutPath);
-		var span = WriteLayout(gameDir);
-		if (!Settle(game, span))
-			TellResizing();
-		else if (File.ReadAllText(layoutPath) != previous)
-			Tell("Your monitor layout changed. Type /reload in WoW to pick it up.");
 		HoldUntilExit(game);
 	}
 

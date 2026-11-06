@@ -8,6 +8,8 @@ end
 local SIDE_TEXTURE = "Interface\\FrameGeneral\\UI-Background-Marble"
 local DROP_MARGIN = 40
 local PARKED_FRAMES = { "CompactRaidFrameManager" }
+local UI_HEIGHT = 768
+local MIN_AUTO_SCALE = 0.64
 
 local screenFrame = CreateFrame("Frame")
 screenFrame:SetAllPoints()
@@ -46,19 +48,16 @@ local positions
 local adopted = {}
 local restoring = false
 local dragged, dragX, dragY
-local baseScale, appliedScale
 
 function ns.isSpanned()
 	return spanned
 end
 
-local function applyScale(ratio)
-	local current = UIParent:GetScale()
-	if current ~= appliedScale then
-		baseScale = current
+local function mainMonitorScale()
+	if GetCVarBool("useUiScale") then
+		return tonumber(GetCVar("uiScale"))
 	end
-	UIParent:SetScale(baseScale * ratio)
-	appliedScale = UIParent:GetScale()
+	return math.min(1, math.max(MIN_AUTO_SCALE, UI_HEIGHT / mainMonitor.height))
 end
 
 local function applyViewport()
@@ -74,7 +73,9 @@ local function applyViewport()
 	WorldFrame:SetAllPoints(viewport)
 	UIParent:ClearAllPoints()
 	UIParent:SetAllPoints(viewport)
-	applyScale(onMain and mainMonitor.height / layout.height or 1)
+	if onMain then
+		UIParent:SetScale(mainMonitorScale() * mainMonitor.height / layout.height)
+	end
 	for _, name in ipairs(PARKED_FRAMES) do
 		local parked = _G[name]
 		if parked then
