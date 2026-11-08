@@ -33,6 +33,7 @@ static class Farsight
 
 	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
 	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+	static readonly Regex WindowedResolutionSetting = new Regex("^SET GxWindowedResolution \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
 	static readonly TimeSpan SettleTimeout = TimeSpan.FromSeconds(20);
 	static readonly TimeSpan SettledAfter = TimeSpan.FromSeconds(3);
@@ -144,6 +145,8 @@ static class Farsight
 			using (var key = Registry.CurrentUser.CreateSubKey(StartupKey))
 				key.SetValue(Title, "\"" + InstalledPath + "\"");
 			new Thread(WatchForeground) { IsBackground = true }.Start();
+			if (RunningGames().Any())
+				new Thread(() => Tell("Close WoW and start it again so Farsight can set it up.")) { IsBackground = true }.Start();
 			while (true)
 				RunSession();
 		}
@@ -238,33 +241,37 @@ static class Farsight
 		return !DesktopClasses.Contains(className.ToString());
 	}
 
-	static void HoldUntilLogout(Process game, string gameDir)
+	static void HoldUntilLogout(Process game, string gameDir, string account)
 	{
 		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
 		RaiseSideWindows(game.MainWindowHandle);
-		var characterList = CharacterListWritten(gameDir);
-		while (!game.HasExited && CharacterListWritten(gameDir) == characterList)
+		var characterList = CharacterListWritten(gameDir, account);
+		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList)
 			Thread.Sleep(PollInterval);
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
 	}
 
-	static DateTime CharacterListWritten(string gameDir)
+	static DateTime CharacterListWritten(string gameDir, string account)
 	{
+		return File.GetLastWriteTimeUtc(Path.Combine(gameDir, AccountsFolder, account, CharacterListFile));
+	}
+
+	static string EnteredAccount(string gameDir, string account, DateTime since)
+	{
+		if (File.GetLastWriteTimeUtc(Path.Combine(gameDir, EnterWorldMarker)) <= since)
+			return null;
 		return Directory.GetDirectories(Path.Combine(gameDir, AccountsFolder))
-			.Select(account => File.GetLastWriteTimeUtc(Path.Combine(account, CharacterListFile)))
-			.Max();
+			.Select(Path.GetFileName)
+			.Where(name => account == null || name == account)
+			.FirstOrDefault(name => CharacterListWritten(gameDir, name) > since);
 	}
 
 	static void RunSession()
 	{
+		foreach (var running in RunningGames())
+			running.WaitForExit();
 		string gameDir;
 		var game = FindGame(out gameDir);
-		if (game != null)
-		{
-			new Thread(() => Tell("Close WoW and start it again so Farsight can set it up.")) { IsBackground = true }.Start();
-			game.WaitForExit();
-			return;
-		}
 		while (game == null)
 		{
 			foreach (var dir in GameDirs())
@@ -272,13 +279,15 @@ static class Farsight
 			Thread.Sleep(IdleInterval);
 			game = FindGame(out gameDir);
 		}
+		string account = null;
 		while (!game.HasExited)
-			PlayOnce(game, gameDir);
+			account = PlayOnce(game, gameDir, account);
 	}
 
 	static string WithWindowedSetting(string config)
 	{
-		return MaximizeSetting.IsMatch(config) ? MaximizeSetting.Replace(config, WindowedSetting) : config + WindowedSetting + "\n";
+		var boxed = WindowedResolutionSetting.Replace(config, "");
+		return MaximizeSetting.IsMatch(boxed) ? MaximizeSetting.Replace(boxed, WindowedSetting) : boxed + WindowedSetting + "\n";
 	}
 
 	static void SetWindowed(string gameDir)
@@ -299,21 +308,27 @@ static class Farsight
 		}
 	}
 
-	static void PlayOnce(Process game, string gameDir)
+	static string PlayOnce(Process game, string gameDir, string account)
 	{
 		var span = WriteLayout(gameDir);
-		var markerPath = Path.Combine(gameDir, EnterWorldMarker);
-		var marker = File.GetLastWriteTimeUtc(markerPath);
+		var since = DateTime.UtcNow;
 
 		if (!Settle(game, PrimaryBounds(MonitorBounds())))
 			TellResizing();
 
-		while (!game.HasExited && File.GetLastWriteTimeUtc(markerPath) == marker)
+		string entered = null;
+		while (!game.HasExited && entered == null)
+		{
 			Thread.Sleep(PollInterval);
+			entered = EnteredAccount(gameDir, account, since);
+		}
+		if (entered == null)
+			return account;
 
 		if (!Settle(game, span))
 			TellResizing();
-		HoldUntilLogout(game, gameDir);
+		HoldUntilLogout(game, gameDir, entered);
+		return entered;
 	}
 
 	static void TellResizing()
@@ -405,13 +420,24 @@ static class Farsight
 		return new Rectangle(centerX - halfWidth, centerY - halfHeight, halfWidth * 2, halfHeight * 2);
 	}
 
+	static Process[] GamesIn(string dir)
+	{
+		return Directory.GetFiles(dir, GamePattern)
+			.SelectMany(path => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(path)).Where(process => RunsFrom(process, path)))
+			.Where(process => process.MainWindowHandle != IntPtr.Zero)
+			.ToArray();
+	}
+
+	static Process[] RunningGames()
+	{
+		return GameDirs().SelectMany(GamesIn).ToArray();
+	}
+
 	static Process FindGame(out string gameDir)
 	{
 		foreach (var dir in GameDirs())
 		{
-			var game = Directory.GetFiles(dir, GamePattern)
-				.SelectMany(path => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(path)).Where(process => RunsFrom(process, path)))
-				.FirstOrDefault(process => process.MainWindowHandle != IntPtr.Zero);
+			var game = GamesIn(dir).FirstOrDefault();
 			if (game != null)
 			{
 				gameDir = dir;
