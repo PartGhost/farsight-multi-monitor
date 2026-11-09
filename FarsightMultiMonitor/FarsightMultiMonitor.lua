@@ -143,13 +143,23 @@ local function clearFit(frame)
 	restore(frame)
 end
 
+local function onSideMonitor(frame)
+	local position = positions[frame:GetName()]
+	return spanned and position and position.monitor ~= layout.main
+end
+
 local function keepMainMonitorVisible(frame)
 	frame.BlackoutFrame:HookScript("OnShow", function(blackout)
-		local position = positions[frame:GetName()]
-		if spanned and position and position.monitor ~= layout.main then
+		if onSideMonitor(frame) then
 			blackout:Hide()
 		end
 	end)
+end
+
+local function keepOpaque(frame, alpha)
+	if alpha < 1 and onSideMonitor(frame) then
+		frame:SetAlpha(1)
+	end
 end
 
 local function adopt(frame)
@@ -162,6 +172,7 @@ local function adopt(frame)
 	if frame.UpdateMaximizedSize then
 		hooksecurefunc(frame, "UpdateMaximizedSize", fitMonitor)
 		hooksecurefunc(frame, "Minimize", clearFit)
+		hooksecurefunc(frame, "SetAlpha", keepOpaque)
 		keepMainMonitorVisible(frame)
 	end
 end

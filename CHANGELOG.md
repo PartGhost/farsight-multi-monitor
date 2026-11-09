@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.0 (addon only)
+
+- The map stays solid on side monitors while you move. WoW still fades it on your main monitor, where it covers the game.
+
 ## 1.0.9 (app only)
 
 - The app starts with Windows from a shortcut in your Startup folder. Windows could skip the startup entry it used before, so WoW opened as a normal window after a restart. Run the new app once and it switches over.
