@@ -18,7 +18,7 @@ The app isn't code-signed, so Windows SmartScreen may warn you the first time. C
 
 ## What the app does
 
-- Copies itself to `%LOCALAPPDATA%\Farsight`, starts with Windows and waits in the background for WoW to open.
+- Copies itself to `%LOCALAPPDATA%\Farsight`, starts with Windows from a shortcut in your Startup folder, and waits in the background for WoW to open.
 - Finds WoW from the install location Battle.net saves in the Windows registry, and only touches game versions that have the addon.
 - Sets the game's display mode to Windowed in `WTF\Config.wtf`.
 - Resizes the game window across your monitors and removes the title bar.
@@ -41,7 +41,7 @@ Blizzard hasn't reviewed or approved this app. Their terms restrict third-party 
 
 1. Close WoW.
 2. End Farsight in Task Manager.
-3. Turn off Farsight under Windows Settings > Apps > Startup.
+3. Delete the Farsight shortcut from your Startup folder. Press Win+R and enter `shell:startup` to open it.
 4. Delete the `%LOCALAPPDATA%\Farsight` folder and uninstall the addon.
 5. In WoW, go back to your preferred display mode in the graphics settings.
 

@@ -32,6 +32,7 @@ static class Farsight
 	const int GameAspectHeight = 9;
 
 	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
+	static readonly string StartupShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), Title + ".lnk");
 	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 	static readonly Regex WindowedResolutionSetting = new Regex("^SET GxWindowedResolution \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
@@ -142,8 +143,7 @@ static class Farsight
 		{
 			if (!firstInstance)
 				return;
-			using (var key = Registry.CurrentUser.CreateSubKey(StartupKey))
-				key.SetValue(Title, "\"" + InstalledPath + "\"");
+			AddToStartup();
 			new Thread(WatchForeground) { IsBackground = true }.Start();
 			if (RunningGames().Any())
 				new Thread(() => Tell("Close WoW and start it again so Farsight can set it up.")) { IsBackground = true }.Start();
@@ -166,6 +166,16 @@ static class Farsight
 		Tell(GameDirs().Any()
 			? "Farsight is set up. Start WoW as usual. You can delete this download."
 			: "Farsight is set up, but it can't find WoW with the Farsight Multi-Monitor addon installed. Install the addon and it will pick it up.");
+	}
+
+	static void AddToStartup()
+	{
+		using (var key = Registry.CurrentUser.OpenSubKey(StartupKey, true))
+			key.DeleteValue(Title, false);
+		dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
+		var shortcut = shell.CreateShortcut(StartupShortcut);
+		shortcut.TargetPath = InstalledPath;
+		shortcut.Save();
 	}
 
 	static string[] GameDirs()

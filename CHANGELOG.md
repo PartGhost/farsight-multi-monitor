@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.0.9 (app only)
+
+- The app starts with Windows from a shortcut in your Startup folder. Windows could skip the startup entry it used before, so WoW opened as a normal window after a restart. Run the new app once and it switches over.
+
 ## 1.0.8 (app only)
 
 - Multiboxing: Farsight only stretches the first WoW you start. Any WoW you start after it stays a normal window, and your first one stays stretched while the others enter the world or log out. Enter the world on your first WoW before the others.
