@@ -11,6 +11,7 @@ local PARKED_FRAMES = { "CompactRaidFrameManager" }
 local UI_HEIGHT = 768
 local MIN_AUTO_SCALE = 0.64
 local WORLD_TEXT_CVAR = "WorldTextScale_v2"
+local MOVABLE_TYPES = { "Frame", "Button" }
 
 local screenFrame = CreateFrame("Frame")
 screenFrame:SetAllPoints()
@@ -48,7 +49,9 @@ local fullWidth = false
 local positions
 local adopted = {}
 local restoring = false
-local dragged, dragX, dragY
+local dragged
+local moveStarts = {}
+local appliedWorldText
 
 function ns.isSpanned()
 	return spanned
@@ -61,18 +64,22 @@ local function mainMonitorScale()
 	return math.min(1, math.max(MIN_AUTO_SCALE, UI_HEIGHT / mainMonitor.height))
 end
 
-local function applyWorldTextScale(onMain)
+local function readPlayerWorldText()
 	local saved = FarsightMultiMonitorDB
-	if not saved then
-		return
-	end
 	local current = GetCVar(WORLD_TEXT_CVAR)
-	if current ~= saved.appliedWorldText and current ~= saved.playerWorldText then
+	if not saved.playerWorldText or appliedWorldText and current ~= appliedWorldText then
 		saved.playerWorldText = current
 	end
+end
+
+local function applyWorldTextScale(onMain)
+	if not FarsightMultiMonitorDB then
+		return
+	end
+	readPlayerWorldText()
 	local windowRatio = onMain and math.max(layout.width / mainMonitor.width, layout.height / mainMonitor.height) or 1
-	SetCVar(WORLD_TEXT_CVAR, tonumber(saved.playerWorldText) / windowRatio)
-	saved.appliedWorldText = GetCVar(WORLD_TEXT_CVAR)
+	SetCVar(WORLD_TEXT_CVAR, tonumber(FarsightMultiMonitorDB.playerWorldText) / windowRatio)
+	appliedWorldText = GetCVar(WORLD_TEXT_CVAR)
 end
 
 local function applyViewport()
@@ -110,7 +117,7 @@ end
 
 local function restore(frame)
 	local position = positions[frame:GetName()]
-	if not spanned or not position or restoring or isLocked(frame) then
+	if not spanned or not position or restoring or moveStarts[frame] or isLocked(frame) then
 		return
 	end
 	restoring = true
@@ -217,6 +224,42 @@ local function nearestMonitor(x, y)
 	return nearestIndex, shiftX, shiftY
 end
 
+local function canMove(frame)
+	local name = frame:GetName()
+	local _, explicitlyProtected = frame:IsProtected()
+	return name and not (explicitlyProtected and issecurevariable(name)) and not frame.system and not isLocked(frame) and not isMaximized(frame)
+end
+
+local function savePosition(frame)
+	local left, top = frame:GetLeft(), frame:GetTop()
+	local scale = frame:GetEffectiveScale() / screenFrame:GetEffectiveScale()
+	local monitor, shiftX, shiftY = nearestMonitor((left + frame:GetWidth() / 2) * scale, layout.height - top * scale)
+	positions[frame:GetName()] = { left = left + shiftX / scale, top = top - shiftY / scale, monitor = monitor }
+	frame:SetUserPlaced(false)
+	adopt(frame)
+	restore(frame)
+end
+
+for _, widgetType in ipairs(MOVABLE_TYPES) do
+	local methods = getmetatable(CreateFrame(widgetType)).__index
+	hooksecurefunc(methods, "StartMoving", function(frame)
+		if not frame:IsForbidden() then
+			moveStarts[frame] = { GetCursorPosition() }
+		end
+	end)
+	hooksecurefunc(methods, "StopMovingOrSizing", function(frame)
+		local start = moveStarts[frame]
+		moveStarts[frame] = nil
+		if not start or not spanned then
+			return
+		end
+		local x, y = GetCursorPosition()
+		if (x ~= start[1] or y ~= start[2]) and canMove(frame) then
+			savePosition(frame)
+		end
+	end)
+end
+
 local handlers = {}
 
 function handlers.ADDON_LOADED(name)
@@ -240,6 +283,7 @@ handlers.PLAYER_REGEN_ENABLED = applyViewport
 handlers.UI_SCALE_CHANGED = applyViewport
 
 function handlers.PLAYER_LOGOUT()
+	readPlayerWorldText()
 	SetCVar(WORLD_TEXT_CVAR, FarsightMultiMonitorDB.playerWorldText)
 end
 
@@ -252,16 +296,11 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		return
 	end
 	local frame = windowOf(focus)
-	if frame == UIParent or not frame:GetName() then
-		return
-	end
-	local _, explicitlyProtected = frame:IsProtected()
-	if explicitlyProtected or frame.system or isLocked(frame) or isMaximized(frame) then
+	if frame == UIParent or not canMove(frame) then
 		return
 	end
 	adopt(frame)
 	dragged = frame
-	dragX, dragY = GetCursorPosition()
 	frame:StartMoving()
 end
 
@@ -273,13 +312,6 @@ function handlers.GLOBAL_MOUSE_UP()
 	dragged = nil
 	frame:StopMovingOrSizing()
 	frame:SetUserPlaced(false)
-	local x, y = GetCursorPosition()
-	if x ~= dragX or y ~= dragY then
-		local left, top = frame:GetLeft(), frame:GetTop()
-		local scale = frame:GetEffectiveScale() / screenFrame:GetEffectiveScale()
-		local monitor, shiftX, shiftY = nearestMonitor((left + frame:GetWidth() / 2) * scale, layout.height - top * scale)
-		positions[frame:GetName()] = { left = left + shiftX / scale, top = top - shiftY / scale, monitor = monitor }
-	end
 	restore(frame)
 end
 
@@ -314,6 +346,24 @@ hooksecurefunc(getmetatable(GameTooltip).__index, "SetOwner", function(tooltip)
 		monitor.y * scale,
 		(monitor.y + monitor.height - layout.height) * scale
 	)
+end)
+
+hooksecurefunc("ContainerFrameItemButton_CalculateItemTooltipAnchors", function(button, tooltip)
+	if not spanned or fullWidth then
+		return
+	end
+	local scale = button:GetEffectiveScale() / screenFrame:GetEffectiveScale()
+	local right = button:GetRight() * scale
+	local _, centerY = button:GetCenter()
+	local monitor = layout.monitors[nearestMonitor(right, layout.height - centerY * scale)]
+	tooltip:ClearAllPoints()
+	if right < monitor.x + monitor.width / 2 then
+		tooltip:SetAnchorType("ANCHOR_RIGHT", 0, 0)
+		tooltip:SetPoint("BOTTOMLEFT", button, "TOPRIGHT")
+	else
+		tooltip:SetAnchorType("ANCHOR_LEFT", 0, 0)
+		tooltip:SetPoint("BOTTOMRIGHT", button, "TOPLEFT")
+	end
 end)
 
 SLASH_FSMRESET1 = "/fsmreset"

@@ -2,6 +2,14 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.1 (addon and app)
+
+- Item tooltips in bags on a side monitor open on the side with room, so the item and its comparison no longer cover each other.
+- Windows that other addons let you drag, like Zygor's minimap icon and guide window, stay where you drop them and snap onto a monitor, instead of drifting after logouts and restarts.
+- Damage numbers no longer get smaller after a crash or with two WoWs open. If yours already look too small, type `/console WorldTextScale_v2 1` and reload.
+- If WoW resets its window after a graphics hiccup, the app stretches it again right away.
+- If WoW is running as administrator, the app tells you instead of doing nothing.
+
 ## 1.1.0 (addon only)
 
 - The map stays solid on side monitors while you move. WoW still fades it on your main monitor, where it covers the game.

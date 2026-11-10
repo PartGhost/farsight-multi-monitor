@@ -61,6 +61,7 @@ static class Farsight
 	const int DWMWA_CLOAKED = 14;
 	const uint MONITOR_DEFAULTTOPRIMARY = 1;
 	const uint MONITOR_DEFAULTTONEAREST = 2;
+	const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 	static readonly IntPtr PerMonitorAwareV2 = new IntPtr(-4);
 	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 	static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
@@ -102,6 +103,12 @@ static class Farsight
 
 	[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
 	static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int length);
+
+	[DllImport("kernel32.dll")]
+	static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
+
+	[DllImport("kernel32.dll")]
+	static extern bool CloseHandle(IntPtr handle);
 
 	[DllImport("user32.dll")]
 	static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr parameter);
@@ -251,13 +258,17 @@ static class Farsight
 		return !DesktopClasses.Contains(className.ToString());
 	}
 
-	static void HoldUntilLogout(Process game, string gameDir, string account)
+	static void HoldUntilLogout(Process game, string gameDir, string account, Rectangle span)
 	{
 		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
 		RaiseSideWindows(game.MainWindowHandle);
 		var characterList = CharacterListWritten(gameDir, account);
 		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList)
+		{
+			if (!IsPlaced(game.MainWindowHandle, span) && !Settle(game, span))
+				TellResizing();
 			Thread.Sleep(PollInterval);
+		}
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
 	}
 
@@ -288,6 +299,12 @@ static class Farsight
 				SetWindowed(dir);
 			Thread.Sleep(IdleInterval);
 			game = FindGame(out gameDir);
+		}
+		if (!CanControl(game))
+		{
+			Tell("WoW is running as administrator, so Farsight can't move its window. Close WoW and start it again without administrator rights.");
+			game.WaitForExit();
+			return;
 		}
 		string account = null;
 		while (!game.HasExited)
@@ -337,7 +354,7 @@ static class Farsight
 
 		if (!Settle(game, span))
 			TellResizing();
-		HoldUntilLogout(game, gameDir, entered);
+		HoldUntilLogout(game, gameDir, entered, span);
 		return entered;
 	}
 
@@ -460,17 +477,23 @@ static class Farsight
 
 	static bool RunsFrom(Process process, string path)
 	{
+		var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process.Id);
+		if (handle == IntPtr.Zero)
+			return false;
 		var image = new StringBuilder(MaxPathLength);
 		var length = image.Capacity;
+		var matches = QueryFullProcessImageName(handle, 0, image, ref length) && string.Equals(image.ToString(), path, StringComparison.OrdinalIgnoreCase);
+		CloseHandle(handle);
+		return matches;
+	}
+
+	static bool CanControl(Process game)
+	{
 		try
 		{
-			return QueryFullProcessImageName(process.Handle, 0, image, ref length) && string.Equals(image.ToString(), path, StringComparison.OrdinalIgnoreCase);
+			return game.Handle != IntPtr.Zero;
 		}
 		catch (Win32Exception)
-		{
-			return false;
-		}
-		catch (InvalidOperationException)
 		{
 			return false;
 		}
