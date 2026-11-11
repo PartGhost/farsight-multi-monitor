@@ -2,6 +2,13 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.3 (addon and app)
+
+- Farsight has a minimap button. Click it to open a small panel next to the minimap, and drag it to move it around the ring.
+- Widescreen, in the panel: the game world fills every monitor while your character stays centered on your main one and your action bars stay put. It costs frame rate, and the outer screens look stretched. It works while the game is on your Windows main display. `/fsmwide` toggles it too, and replaces `/fsmsplit` for very wide single monitors, which now keep the interface in the middle as well.
+- Game monitor, in the panel: move the game and its interface to another monitor right away. Loading screens and character select stay on your Windows main display. The choice is saved for each monitor setup.
+- If you get disconnected, the login screen goes back to your main monitor instead of stretching across all of them.
+
 ## 1.1.2 (addon and app)
 
 - Drag the grip in the map's bottom-right corner to make it bigger or smaller. The size is saved.

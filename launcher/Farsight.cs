@@ -23,6 +23,8 @@ static class Farsight
 	const string EnterWorldMarker = @"WTF\SavedVariables\Blizzard_GlueSavedVariables.lua";
 	const string AccountsFolder = @"WTF\Account";
 	const string CharacterListFile = "character-list-order.txt";
+	const string GameLog = @"Logs\General.log";
+	const string LeftWorldMarker = "[Glues] Resume()";
 	const string WindowedSetting = "SET GxMaximize \"0\"";
 	const string StartupKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 	const int MaxWindowSize = 16384;
@@ -277,7 +279,9 @@ static class Farsight
 		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
 		RaiseSideWindows(game.MainWindowHandle);
 		var characterList = CharacterListWritten(gameDir, account);
-		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList)
+		var log = Path.Combine(gameDir, GameLog);
+		var logRead = File.Exists(log) ? new FileInfo(log).Length : 0;
+		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList && !Logged(log, ref logRead, LeftWorldMarker))
 		{
 			if (MonitorsChanged(ref monitors))
 			{
@@ -289,6 +293,21 @@ static class Farsight
 			Thread.Sleep(PollInterval);
 		}
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
+	}
+
+	static bool Logged(string path, ref long read, string marker)
+	{
+		if (!File.Exists(path))
+			return false;
+		using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+		{
+			if (stream.Length < read)
+				read = 0;
+			stream.Seek(read, SeekOrigin.Begin);
+			var text = new StreamReader(stream).ReadToEnd();
+			read = stream.Position;
+			return text.Contains(marker);
+		}
 	}
 
 	static bool MonitorsChanged(ref Rectangle[] monitors)

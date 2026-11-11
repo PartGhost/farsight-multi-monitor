@@ -35,7 +35,11 @@ Blizzard hasn't reviewed or approved this app. Their terms restrict third-party 
 
 - `/fsm` shows the help window.
 - `/fsmreset` clears your saved panel positions for your current monitor setup, and puts the map's size and position back to normal.
-- `/fsmsplit` switches between the split and full-width view on a very wide single monitor.
+- `/fsmwide` turns Widescreen on or off, the same as the minimap panel.
+
+The minimap button opens a panel with Widescreen and a choice of which monitor holds the game.
+
+The panel's fonts are Cinzel and Figtree, under the SIL Open Font License (see `FarsightMultiMonitor/Fonts`).
 
 ## Uninstall
 

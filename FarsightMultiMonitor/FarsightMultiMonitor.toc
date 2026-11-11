@@ -2,7 +2,9 @@
 ## Title: Farsight Multi-Monitor
 ## Notes: Keeps the game on your main monitor and lets panels live on the others.
 ## SavedVariables: FarsightMultiMonitorDB
+## IconTexture: Interface\AddOns\FarsightMultiMonitor\Textures\icon
 
 Layout.lua
 FarsightMultiMonitor.lua
 Welcome.lua
+Menu.lua

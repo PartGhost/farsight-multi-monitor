@@ -31,23 +31,27 @@ sideFrame:SetFrameStrata("BACKGROUND")
 
 local monitorKeys = {}
 local monitorFrames = {}
+local backgrounds = {}
+local unionLeft, unionTop, unionRight, unionBottom = math.huge, math.huge, -math.huge, -math.huge
 for index, monitor in ipairs(layout.monitors) do
 	monitorKeys[index] = string.format("%dx%d+%d+%d", monitor.width, monitor.height, monitor.x, monitor.y)
 	local monitorFrame = CreateFrame("Frame", nil, screenFrame)
 	monitorFrame:SetPoint("TOPLEFT", monitor.x, -monitor.y)
 	monitorFrame:SetSize(monitor.width, monitor.height)
 	monitorFrames[index] = monitorFrame
-	if index ~= layout.main then
-		local background = sideFrame:CreateTexture(nil, "BACKGROUND")
-		background:SetAllPoints(monitorFrame)
-		background:SetTexture(SIDE_TEXTURE, "REPEAT", "REPEAT")
-		background:SetHorizTile(true)
-		background:SetVertTile(true)
-	end
+	local background = sideFrame:CreateTexture(nil, "BACKGROUND")
+	background:SetAllPoints(monitorFrame)
+	background:SetTexture(SIDE_TEXTURE, "REPEAT", "REPEAT")
+	background:SetHorizTile(true)
+	background:SetVertTile(true)
+	backgrounds[index] = background
+	unionLeft, unionTop = math.min(unionLeft, monitor.x), math.min(unionTop, monitor.y)
+	unionRight, unionBottom = math.max(unionRight, monitor.x + monitor.width), math.max(unionBottom, monitor.y + monitor.height)
 end
 local layoutKey = table.concat(monitorKeys, " ")
-local mainMonitor = layout.monitors[layout.main]
+local worldArea = CreateFrame("Frame", nil, screenFrame)
 
+local mainIndex = layout.main
 local spanned = false
 local fullWidth = false
 local positions
@@ -61,7 +65,7 @@ function ns.isSpanned()
 	return spanned
 end
 
-local function mainMonitorScale()
+local function mainMonitorScale(mainMonitor)
 	if GetCVarBool("useUiScale") then
 		return tonumber(GetCVar("uiScale"))
 	end
@@ -76,33 +80,60 @@ local function readPlayerWorldText()
 	end
 end
 
-local function applyWorldTextScale(onMain)
+local function applyWorldTextScale(world)
 	if not FarsightMultiMonitorDB then
 		return
 	end
 	readPlayerWorldText()
-	local windowRatio = onMain and math.max(layout.width / mainMonitor.width, layout.height / mainMonitor.height) or 1
+	local windowRatio = world and math.max(layout.width / world.width, layout.height / world.height) or 1
 	SetCVar(WORLD_TEXT_CVAR, tonumber(FarsightMultiMonitorDB.playerWorldText) / windowRatio)
 	appliedWorldText = GetCVar(WORLD_TEXT_CVAR)
+end
+
+local function canWiden()
+	return mainIndex == layout.main
+end
+
+local function widened()
+	return fullWidth and canWiden()
+end
+
+local function worldRect(monitor)
+	if not widened() then
+		return monitor
+	end
+	local centerX, centerY = monitor.x + monitor.width / 2, monitor.y + monitor.height / 2
+	local halfWidth = math.max(centerX - unionLeft, unionRight - centerX)
+	local halfHeight = math.max(centerY - unionTop, unionBottom - centerY)
+	return { x = centerX - halfWidth, y = centerY - halfHeight, width = halfWidth * 2, height = halfHeight * 2 }
 end
 
 local function applyViewport()
 	local width, height = GetPhysicalScreenSize()
 	spanned = width == layout.width and height == layout.height
-	local onMain = spanned and not fullWidth
-	sideFrame:SetShown(onMain)
+	sideFrame:SetShown(spanned and not widened())
+	for index, background in ipairs(backgrounds) do
+		background:SetShown(index ~= mainIndex)
+	end
 	if InCombatLockdown() then
 		return
 	end
-	local viewport = onMain and monitorFrames[layout.main] or screenFrame
+	local mainMonitor = layout.monitors[mainIndex]
+	local world = worldRect(mainMonitor)
 	WorldFrame:ClearAllPoints()
-	WorldFrame:SetAllPoints(viewport)
 	UIParent:ClearAllPoints()
-	UIParent:SetAllPoints(viewport)
-	if onMain then
-		UIParent:SetScale(mainMonitorScale() * mainMonitor.height / layout.height)
+	worldArea:ClearAllPoints()
+	worldArea:SetPoint("TOPLEFT", world.x, -world.y)
+	worldArea:SetSize(world.width, world.height)
+	if spanned then
+		WorldFrame:SetAllPoints(worldArea)
+		UIParent:SetAllPoints(monitorFrames[mainIndex])
+		UIParent:SetScale(mainMonitorScale(mainMonitor) * mainMonitor.height / layout.height)
+	else
+		WorldFrame:SetAllPoints(screenFrame)
+		UIParent:SetAllPoints(screenFrame)
 	end
-	applyWorldTextScale(onMain)
+	applyWorldTextScale(spanned and world)
 	for _, name in ipairs(PARKED_FRAMES) do
 		local parked = _G[name]
 		if parked then
@@ -121,7 +152,7 @@ end
 
 local function homeMonitor(frame)
 	local position = positions[frame:GetName()]
-	return monitorFrames[position and position.monitor or layout.main]
+	return monitorFrames[position and position.monitor or mainIndex]
 end
 
 local function fitScale(frame, monitorFrame)
@@ -169,7 +200,7 @@ end
 
 local function onSideMonitor(frame)
 	local position = positions[frame:GetName()]
-	return spanned and position and position.monitor ~= layout.main
+	return spanned and position and position.monitor ~= mainIndex
 end
 
 local function keepMainMonitorVisible(frame)
@@ -352,7 +383,9 @@ function handlers.ADDON_LOADED(name)
 		positions = FarsightMultiMonitorDB[layoutKey]
 		FarsightMultiMonitorDB.mapScale = FarsightMultiMonitorDB.mapScale or 1
 		FarsightMultiMonitorDB.mapShift = FarsightMultiMonitorDB.mapShift or 0
-		fullWidth = layout.split and FarsightMultiMonitorDB.fullWidth or false
+		FarsightMultiMonitorDB.gameMonitors = FarsightMultiMonitorDB.gameMonitors or {}
+		mainIndex = FarsightMultiMonitorDB.gameMonitors[layoutKey] or layout.main
+		fullWidth = FarsightMultiMonitorDB.fullWidth or false
 		applyViewport()
 		EventUtil.ContinueOnAddOnLoaded("Blizzard_WorldMap", setupMap)
 	end
@@ -429,7 +462,7 @@ hooksecurefunc(InputUtil, "AnchorRegionToCursor", function(region, point)
 end)
 
 hooksecurefunc(getmetatable(GameTooltip).__index, "SetOwner", function(tooltip)
-	if not spanned or fullWidth or tooltip:IsForbidden() or tooltip:IsMovable() then
+	if not spanned or tooltip:IsForbidden() or tooltip:IsMovable() then
 		return
 	end
 	local screenScale = screenFrame:GetEffectiveScale()
@@ -445,7 +478,7 @@ hooksecurefunc(getmetatable(GameTooltip).__index, "SetOwner", function(tooltip)
 end)
 
 hooksecurefunc("ContainerFrameItemButton_CalculateItemTooltipAnchors", function(button, tooltip)
-	if not spanned or fullWidth then
+	if not spanned then
 		return
 	end
 	local scale = button:GetEffectiveScale() / screenFrame:GetEffectiveScale()
@@ -470,10 +503,27 @@ SlashCmdList.FSMRESET = function()
 	ReloadUI()
 end
 
-SLASH_FSMSPLIT1 = "/fsmsplit"
-SlashCmdList.FSMSPLIT = function()
-	if layout.split then
-		FarsightMultiMonitorDB.fullWidth = not FarsightMultiMonitorDB.fullWidth
-		ReloadUI()
-	end
+function ns.isWidescreen()
+	return widened()
 end
+
+ns.canWiden = canWiden
+
+function ns.toggleWidescreen()
+	fullWidth = not fullWidth
+	FarsightMultiMonitorDB.fullWidth = fullWidth
+	applyViewport()
+end
+
+function ns.gameMonitor()
+	return mainIndex
+end
+
+function ns.setGameMonitor(index)
+	mainIndex = index
+	FarsightMultiMonitorDB.gameMonitors[layoutKey] = index
+	applyViewport()
+end
+
+SLASH_FSMWIDE1 = "/fsmwide"
+SlashCmdList.FSMWIDE = ns.toggleWidescreen

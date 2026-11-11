@@ -15,6 +15,7 @@ local MESSAGES = {
 		"- Drag a panel by its title bar or any empty spot. It stays where you drop it.",
 		"- Drag bags by the bottom edge. The header opens the sorting menu.",
 		"- Apps on a side monitor, like a browser or Discord, stay above the game. They cover any panel underneath, so give them their own space.",
+		"- The Farsight button on the minimap can stretch the game world across every monitor or move the game to another monitor.",
 		"- /fsmreset clears your saved panel positions.",
 		"- /fsm shows this window again.",
 	}, "\n"),
