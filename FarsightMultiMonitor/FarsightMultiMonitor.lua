@@ -12,6 +12,10 @@ local UI_HEIGHT = 768
 local MIN_AUTO_SCALE = 0.64
 local WORLD_TEXT_CVAR = "WorldTextScale_v2"
 local MOVABLE_TYPES = { "Frame", "Button" }
+local MAP_MIN_SCALE = 0.5
+local SCALE_GRIP_TEXTURE = "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber"
+local SCALE_GRIP_SIZE = 16
+local SCALE_GRIP_INSET = 4
 
 local screenFrame = CreateFrame("Frame")
 screenFrame:SetAllPoints()
@@ -115,15 +119,32 @@ local function isMaximized(frame)
 	return frame.IsMaximized and frame:IsMaximized()
 end
 
+local function homeMonitor(frame)
+	local position = positions[frame:GetName()]
+	return monitorFrames[position and position.monitor or layout.main]
+end
+
+local function fitScale(frame, monitorFrame)
+	local scale = monitorFrame:GetEffectiveScale() / frame:GetParent():GetEffectiveScale()
+	local width, height = frame:GetSize()
+	return math.min(monitorFrame:GetWidth() * scale / width, monitorFrame:GetHeight() * scale / height)
+end
+
+local function shiftRoom(frame, monitorFrame)
+	return math.max(0, (monitorFrame:GetWidth() * monitorFrame:GetEffectiveScale() / frame:GetEffectiveScale() - frame:GetWidth()) / 2)
+end
+
 local function restore(frame)
 	local position = positions[frame:GetName()]
-	if not spanned or not position or restoring or moveStarts[frame] or isLocked(frame) then
+	local maximized = isMaximized(frame)
+	if not spanned or not (position or maximized) or restoring or moveStarts[frame] or isLocked(frame) then
 		return
 	end
 	restoring = true
 	frame:ClearAllPoints()
-	if isMaximized(frame) then
-		frame:SetPoint("CENTER", monitorFrames[position.monitor])
+	if maximized then
+		local monitorFrame = homeMonitor(frame)
+		frame:SetPoint("CENTER", monitorFrame, FarsightMultiMonitorDB.mapShift * shiftRoom(frame, monitorFrame), 0)
 	else
 		frame:SetPoint("TOPLEFT", screenFrame, "BOTTOMLEFT", position.left, position.top)
 	end
@@ -131,14 +152,10 @@ local function restore(frame)
 end
 
 local function fitMonitor(frame)
-	local position = positions[frame:GetName()]
-	if not spanned or not position or isLocked(frame) then
+	if not spanned or isLocked(frame) then
 		return
 	end
-	local monitorFrame = monitorFrames[position.monitor]
-	local scale = monitorFrame:GetEffectiveScale() / frame:GetParent():GetEffectiveScale()
-	local width, height = frame:GetSize()
-	frame:SetScale(math.min(monitorFrame:GetWidth() * scale / width, monitorFrame:GetHeight() * scale / height))
+	frame:SetScale(fitScale(frame, homeMonitor(frame)))
 	restore(frame)
 end
 
@@ -146,7 +163,7 @@ local function clearFit(frame)
 	if isLocked(frame) then
 		return
 	end
-	frame:SetScale(1)
+	frame:SetScale(spanned and FarsightMultiMonitorDB.mapScale or 1)
 	restore(frame)
 end
 
@@ -260,6 +277,72 @@ for _, widgetType in ipairs(MOVABLE_TYPES) do
 	end)
 end
 
+local mapSlider = CreateFrame("Frame")
+
+local function startSlide(frame)
+	local room = shiftRoom(frame, homeMonitor(frame))
+	if room == 0 or isLocked(frame) then
+		return
+	end
+	local startX = GetCursorPosition()
+	local startShift = FarsightMultiMonitorDB.mapShift
+	mapSlider:SetScript("OnUpdate", function()
+		local x = GetCursorPosition()
+		FarsightMultiMonitorDB.mapShift = Clamp(startShift + (x - startX) / frame:GetEffectiveScale() / room, -1, 1)
+		restore(frame)
+	end)
+end
+
+local function startScaling(map, grip)
+	if not spanned or isLocked(map) then
+		return
+	end
+	if not positions[map:GetName()] then
+		savePosition(map)
+	end
+	local position = positions[map:GetName()]
+	local startX, startY = GetCursorPosition()
+	local startScale, left, top = map:GetScale(), position.left, position.top
+	local width = map:GetWidth() * map:GetEffectiveScale()
+	local height = map:GetHeight() * map:GetEffectiveScale()
+	grip:SetScript("OnUpdate", function()
+		local x, y = GetCursorPosition()
+		local growth = ((width + x - startX) * width + (height + startY - y) * height) / (width * width + height * height)
+		local scale = Clamp(startScale * growth, MAP_MIN_SCALE, fitScale(map, homeMonitor(map)))
+		FarsightMultiMonitorDB.mapScale = scale
+		position.left, position.top = left * startScale / scale, top * startScale / scale
+		map:SetScale(scale)
+		restore(map)
+	end)
+end
+
+local function setupMap()
+	local map = WorldMapFrame
+	adopt(map)
+	if not isMaximized(map) then
+		clearFit(map)
+	end
+	local grip = CreateFrame("Button", nil, map.BorderFrame)
+	grip:SetSize(SCALE_GRIP_SIZE, SCALE_GRIP_SIZE)
+	grip:SetPoint("BOTTOMRIGHT", -SCALE_GRIP_INSET, SCALE_GRIP_INSET)
+	grip:SetNormalTexture(SCALE_GRIP_TEXTURE .. "-Up")
+	grip:SetPushedTexture(SCALE_GRIP_TEXTURE .. "-Down")
+	grip:SetHighlightTexture(SCALE_GRIP_TEXTURE .. "-Highlight")
+	grip:SetShown(spanned and not isMaximized(map))
+	grip:SetScript("OnMouseDown", function()
+		startScaling(map, grip)
+	end)
+	grip:SetScript("OnMouseUp", function()
+		if grip:GetScript("OnUpdate") then
+			grip:SetScript("OnUpdate", nil)
+			savePosition(map)
+		end
+	end)
+	hooksecurefunc(map, "SynchronizeDisplayState", function()
+		grip:SetShown(spanned and not isMaximized(map))
+	end)
+end
+
 local handlers = {}
 
 function handlers.ADDON_LOADED(name)
@@ -267,8 +350,11 @@ function handlers.ADDON_LOADED(name)
 		FarsightMultiMonitorDB = FarsightMultiMonitorDB or {}
 		FarsightMultiMonitorDB[layoutKey] = FarsightMultiMonitorDB[layoutKey] or {}
 		positions = FarsightMultiMonitorDB[layoutKey]
+		FarsightMultiMonitorDB.mapScale = FarsightMultiMonitorDB.mapScale or 1
+		FarsightMultiMonitorDB.mapShift = FarsightMultiMonitorDB.mapShift or 0
 		fullWidth = layout.split and FarsightMultiMonitorDB.fullWidth or false
 		applyViewport()
+		EventUtil.ContinueOnAddOnLoaded("Blizzard_WorldMap", setupMap)
 	end
 	adoptSaved()
 end
@@ -296,7 +382,16 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		return
 	end
 	local frame = windowOf(focus)
-	if frame == UIParent or not canMove(frame) then
+	if frame == UIParent then
+		return
+	end
+	if isMaximized(frame) then
+		if adopted[frame] then
+			startSlide(frame)
+		end
+		return
+	end
+	if not canMove(frame) then
 		return
 	end
 	adopt(frame)
@@ -305,6 +400,7 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 end
 
 function handlers.GLOBAL_MOUSE_UP()
+	mapSlider:SetScript("OnUpdate", nil)
 	if not dragged then
 		return
 	end
@@ -369,6 +465,8 @@ end)
 SLASH_FSMRESET1 = "/fsmreset"
 SlashCmdList.FSMRESET = function()
 	wipe(positions)
+	FarsightMultiMonitorDB.mapScale = nil
+	FarsightMultiMonitorDB.mapShift = nil
 	ReloadUI()
 end
 

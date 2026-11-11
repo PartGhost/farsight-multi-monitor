@@ -34,7 +34,7 @@ static class Farsight
 	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
 	static readonly string StartupShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), Title + ".lnk");
 	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
-	static readonly Regex WindowedResolutionSetting = new Regex("^SET GxWindowedResolution \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+	static readonly Regex PlacementSettings = new Regex("^SET Gx(WindowedResolution|Monitor) \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
 	static readonly TimeSpan SettleTimeout = TimeSpan.FromSeconds(20);
 	static readonly TimeSpan SettledAfter = TimeSpan.FromSeconds(3);
@@ -80,6 +80,14 @@ static class Farsight
 		public int Left, Top, Right, Bottom;
 	}
 
+	[StructLayout(LayoutKind.Sequential)]
+	struct MONITORINFO
+	{
+		public int Size;
+		public RECT Monitor, Work;
+		public uint Flags;
+	}
+
 	[DllImport("user32.dll")]
 	static extern bool SetProcessDpiAwarenessContext(IntPtr context);
 
@@ -118,6 +126,12 @@ static class Farsight
 
 	[DllImport("user32.dll")]
 	static extern IntPtr MonitorFromPoint(Point point, uint flags);
+
+	[DllImport("user32.dll")]
+	static extern IntPtr MonitorFromRect(ref RECT rect, uint flags);
+
+	[DllImport("user32.dll")]
+	static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
 
 	[DllImport("user32.dll")]
 	static extern bool IsWindowVisible(IntPtr window);
@@ -258,18 +272,35 @@ static class Farsight
 		return !DesktopClasses.Contains(className.ToString());
 	}
 
-	static void HoldUntilLogout(Process game, string gameDir, string account, Rectangle span)
+	static void HoldUntilLogout(Process game, string gameDir, string account, Rectangle[] monitors, Rectangle span)
 	{
 		Volatile.Write(ref spannedWindow, game.MainWindowHandle);
 		RaiseSideWindows(game.MainWindowHandle);
 		var characterList = CharacterListWritten(gameDir, account);
 		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList)
 		{
+			if (MonitorsChanged(ref monitors))
+			{
+				span = WriteLayout(gameDir, monitors);
+				new Thread(() => Tell("Your screens changed, so Farsight stretched WoW over the new layout. Type /reload in WoW to finish.")) { IsBackground = true }.Start();
+			}
 			if (!IsPlaced(game.MainWindowHandle, span) && !Settle(game, span))
 				TellResizing();
 			Thread.Sleep(PollInterval);
 		}
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
+	}
+
+	static bool MonitorsChanged(ref Rectangle[] monitors)
+	{
+		var current = MonitorBounds();
+		if (current.SequenceEqual(monitors))
+			return false;
+		Thread.Sleep(SettledAfter);
+		if (!MonitorBounds().SequenceEqual(current))
+			return false;
+		monitors = current;
+		return true;
 	}
 
 	static DateTime CharacterListWritten(string gameDir, string account)
@@ -313,7 +344,7 @@ static class Farsight
 
 	static string WithWindowedSetting(string config)
 	{
-		var boxed = WindowedResolutionSetting.Replace(config, "");
+		var boxed = PlacementSettings.Replace(config, "");
 		return MaximizeSetting.IsMatch(boxed) ? MaximizeSetting.Replace(boxed, WindowedSetting) : boxed + WindowedSetting + "\n";
 	}
 
@@ -337,16 +368,23 @@ static class Farsight
 
 	static string PlayOnce(Process game, string gameDir, string account)
 	{
-		var span = WriteLayout(gameDir);
+		var monitors = MonitorBounds();
+		var span = WriteLayout(gameDir, monitors);
 		var since = DateTime.UtcNow;
 
-		if (!Settle(game, PrimaryBounds(MonitorBounds())))
+		if (!Settle(game, PrimaryBounds(monitors)))
 			TellResizing();
 
 		string entered = null;
 		while (!game.HasExited && entered == null)
 		{
 			Thread.Sleep(PollInterval);
+			if (MonitorsChanged(ref monitors))
+			{
+				span = WriteLayout(gameDir, monitors);
+				if (!Settle(game, PrimaryBounds(monitors)))
+					TellResizing();
+			}
 			entered = EnteredAccount(gameDir, account, since);
 		}
 		if (entered == null)
@@ -354,7 +392,7 @@ static class Farsight
 
 		if (!Settle(game, span))
 			TellResizing();
-		HoldUntilLogout(game, gameDir, entered, span);
+		HoldUntilLogout(game, gameDir, entered, monitors, span);
 		return entered;
 	}
 
@@ -368,10 +406,9 @@ static class Farsight
 		MessageBox.Show(message, Title, MessageBoxButtons.OK, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1, MessageBoxOptions.DefaultDesktopOnly);
 	}
 
-	static Rectangle WriteLayout(string gameDir)
+	static Rectangle WriteLayout(string gameDir, Rectangle[] monitors)
 	{
 		Rectangle window;
-		var monitors = MonitorBounds();
 		var text = BuildLayout(monitors, PrimaryBounds(monitors), out window);
 		File.WriteAllText(Path.Combine(gameDir, LayoutFile), text);
 		return window;
@@ -534,6 +571,14 @@ static class Farsight
 	{
 		var style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
 		SetWindowLongPtr(window, GWL_STYLE, new IntPtr(style & ~Decorations));
-		SetWindowPos(window, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOSENDCHANGING);
+		var rect = new RECT { Left = bounds.Left, Top = bounds.Top, Right = bounds.Right, Bottom = bounds.Bottom };
+		var owner = MonitorFromRect(ref rect, MONITOR_DEFAULTTONEAREST);
+		if (MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) != owner)
+		{
+			var info = new MONITORINFO { Size = Marshal.SizeOf(typeof(MONITORINFO)) };
+			GetMonitorInfo(owner, ref info);
+			rect = info.Monitor;
+		}
+		SetWindowPos(window, IntPtr.Zero, rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOSENDCHANGING);
 	}
 }

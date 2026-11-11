@@ -2,6 +2,15 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.2 (addon and app)
+
+- Drag the grip in the map's bottom-right corner to make it bigger or smaller. The size is saved.
+- Drag the fullscreen map by its top bar to slide it left or right on its monitor, so bags and other windows fit beside it. It opens there next time.
+- `/fsmreset` also puts the map's size and position back to normal.
+- If you plug in, unplug or rearrange a screen, or change your main display, while WoW is running, the app moves WoW to the new layout without a restart. In the world it asks you to type `/reload` so the addon picks up the change.
+- To play on another screen, like a TV from the couch, make it your main display in Windows. Screens with different scaling, such as 100% and 150%, no longer stop WoW from stretching.
+- Picking a different monitor in WoW's own graphics options no longer throws off the layout. Farsight decides where WoW goes, so the app clears that setting while WoW is closed.
+
 ## 1.1.1 (addon and app)
 
 - Item tooltips in bags on a side monitor open on the side with room, so the item and its comparison no longer cover each other.
