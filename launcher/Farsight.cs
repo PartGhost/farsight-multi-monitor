@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -25,6 +26,7 @@ static class Farsight
 	const string CharacterListFile = "character-list-order.txt";
 	const string GameLog = @"Logs\General.log";
 	const string LeftWorldMarker = "[Glues] Resume()";
+	const string LogTimeFormat = "MM/dd HH:mm:ss.fff";
 	const string WindowedSetting = "SET GxMaximize \"0\"";
 	const string StartupKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 	const int MaxWindowSize = 16384;
@@ -281,7 +283,8 @@ static class Farsight
 		var characterList = CharacterListWritten(gameDir, account);
 		var log = Path.Combine(gameDir, GameLog);
 		var logRead = File.Exists(log) ? new FileInfo(log).Length : 0;
-		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList && !Logged(log, ref logRead, LeftWorldMarker))
+		var entered = DateTime.Now;
+		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList && !Logged(log, ref logRead, LeftWorldMarker, entered))
 		{
 			if (MonitorsChanged(ref monitors))
 			{
@@ -295,19 +298,32 @@ static class Farsight
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
 	}
 
-	static bool Logged(string path, ref long read, string marker)
+	static bool Logged(string path, ref long read, string marker, DateTime since)
 	{
 		if (!File.Exists(path))
 			return false;
+		var bytes = new MemoryStream();
 		using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
 		{
 			if (stream.Length < read)
 				read = 0;
 			stream.Seek(read, SeekOrigin.Begin);
-			var text = new StreamReader(stream).ReadToEnd();
-			read = stream.Position;
-			return text.Contains(marker);
+			stream.CopyTo(bytes);
 		}
+		var lines = bytes.ToArray();
+		var complete = Array.LastIndexOf(lines, (byte)'\n') + 1;
+		read += complete;
+		return Encoding.UTF8.GetString(lines, 0, complete)
+			.Split('\n')
+			.Any(line => line.Contains(marker) && LoggedAfter(line, since));
+	}
+
+	static bool LoggedAfter(string line, DateTime since)
+	{
+		DateTime time;
+		return line.Length >= LogTimeFormat.Length
+			&& DateTime.TryParseExact(line.Substring(0, LogTimeFormat.Length), LogTimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out time)
+			&& time > since;
 	}
 
 	static bool MonitorsChanged(ref Rectangle[] monitors)

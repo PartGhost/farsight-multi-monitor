@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.4 (app only)
+
+- Fixed WoW dropping back to your main monitor in the middle of playing, often after a `/reload`. The 1.1.3 app could mistake an old line in WoW's log for a disconnect.
+
 ## 1.1.3 (addon and app)
 
 - Farsight has a minimap button. Click it to open a small panel next to the minimap, and drag it to move it around the ring.
