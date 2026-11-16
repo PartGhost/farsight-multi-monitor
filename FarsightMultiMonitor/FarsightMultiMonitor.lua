@@ -10,7 +10,14 @@ local DROP_MARGIN = 40
 local PARKED_FRAMES = { "CompactRaidFrameManager" }
 local UI_HEIGHT = 768
 local MIN_AUTO_SCALE = 0.64
-local WORLD_TEXT_CVAR = "WorldTextScale_v2"
+local SCALED_CVARS = {
+	WorldTextScale_v2 = function(world)
+		return math.max(layout.width / world.width, layout.height / world.height)
+	end,
+	CursorFreelookStartDelta = function(_, mainMonitor)
+		return layout.width / mainMonitor.width
+	end,
+}
 local MOVABLE_TYPES = { "Frame", "Button" }
 local MAP_MIN_SCALE = 0.5
 local SCALE_GRIP_TEXTURE = "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber"
@@ -59,7 +66,7 @@ local adopted = {}
 local restoring = false
 local dragged
 local moveStarts = {}
-local appliedWorldText
+local appliedCVars = {}
 
 function ns.isSpanned()
 	return spanned
@@ -72,22 +79,23 @@ local function mainMonitorScale(mainMonitor)
 	return math.min(1, math.max(MIN_AUTO_SCALE, UI_HEIGHT / mainMonitor.height))
 end
 
-local function readPlayerWorldText()
-	local saved = FarsightMultiMonitorDB
-	local current = GetCVar(WORLD_TEXT_CVAR)
-	if not saved.playerWorldText or appliedWorldText and current ~= appliedWorldText then
-		saved.playerWorldText = current
+local function readPlayerCVar(name)
+	local saved = FarsightMultiMonitorDB.playerCVars
+	local current = GetCVar(name)
+	if not saved[name] or appliedCVars[name] and current ~= appliedCVars[name] then
+		saved[name] = current
 	end
 end
 
-local function applyWorldTextScale(world)
+local function applyScaledCVars(world, mainMonitor)
 	if not FarsightMultiMonitorDB then
 		return
 	end
-	readPlayerWorldText()
-	local windowRatio = world and math.max(layout.width / world.width, layout.height / world.height) or 1
-	SetCVar(WORLD_TEXT_CVAR, tonumber(FarsightMultiMonitorDB.playerWorldText) / windowRatio)
-	appliedWorldText = GetCVar(WORLD_TEXT_CVAR)
+	for name, ratio in pairs(SCALED_CVARS) do
+		readPlayerCVar(name)
+		SetCVar(name, tonumber(FarsightMultiMonitorDB.playerCVars[name]) / (spanned and ratio(world, mainMonitor) or 1))
+		appliedCVars[name] = GetCVar(name)
+	end
 end
 
 local function canWiden()
@@ -133,7 +141,7 @@ local function applyViewport()
 		WorldFrame:SetAllPoints(screenFrame)
 		UIParent:SetAllPoints(screenFrame)
 	end
-	applyWorldTextScale(spanned and world)
+	applyScaledCVars(world, mainMonitor)
 	for _, name in ipairs(PARKED_FRAMES) do
 		local parked = _G[name]
 		if parked then
@@ -384,6 +392,7 @@ function handlers.ADDON_LOADED(name)
 		FarsightMultiMonitorDB.mapScale = FarsightMultiMonitorDB.mapScale or 1
 		FarsightMultiMonitorDB.mapShift = FarsightMultiMonitorDB.mapShift or 0
 		FarsightMultiMonitorDB.gameMonitors = FarsightMultiMonitorDB.gameMonitors or {}
+		FarsightMultiMonitorDB.playerCVars = FarsightMultiMonitorDB.playerCVars or {}
 		mainIndex = FarsightMultiMonitorDB.gameMonitors[layoutKey] or layout.main
 		fullWidth = FarsightMultiMonitorDB.fullWidth or false
 		applyViewport()
@@ -397,13 +406,14 @@ function handlers.DISPLAY_SIZE_CHANGED()
 	adoptSaved()
 end
 
-handlers.PLAYER_ENTERING_WORLD = applyViewport
 handlers.PLAYER_REGEN_ENABLED = applyViewport
 handlers.UI_SCALE_CHANGED = applyViewport
 
 function handlers.PLAYER_LOGOUT()
-	readPlayerWorldText()
-	SetCVar(WORLD_TEXT_CVAR, FarsightMultiMonitorDB.playerWorldText)
+	for name in pairs(SCALED_CVARS) do
+		readPlayerCVar(name)
+		SetCVar(name, FarsightMultiMonitorDB.playerCVars[name])
+	end
 end
 
 function handlers.GLOBAL_MOUSE_DOWN(button)
@@ -424,7 +434,7 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		end
 		return
 	end
-	if not canMove(frame) then
+	if frame:GetScript("OnDragStart") or not canMove(frame) then
 		return
 	end
 	adopt(frame)
@@ -453,6 +463,8 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 applyViewport()
+hooksecurefunc("UpdateUIParentPosition", applyViewport)
+CinematicFrame:HookScript("OnHide", applyViewport)
 
 hooksecurefunc(InputUtil, "AnchorRegionToCursor", function(region, point)
 	local x, y = GetCursorPosition()

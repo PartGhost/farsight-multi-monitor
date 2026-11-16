@@ -2,6 +2,14 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.5 (addon and app)
+
+- Fixed the interface spreading across the wrong monitors after a `/reload`.
+- Holding the right mouse button turns the camera straight away instead of starting late and snapping. Farsight lowers WoW's `CursorFreelookStartDelta` setting to match your main monitor while you play, and puts your own value back when you log out.
+- Farsight no longer grabs windows that have their own drag, so they move the way their addon made them.
+- Starting a second WoW, like on another account, no longer puts your first WoW back on your main monitor.
+- The app keeps a short log in `%LOCALAPPDATA%\Farsight\Farsight.log` to help track down problems.
+
 ## 1.1.4 (app only)
 
 - Fixed WoW dropping back to your main monitor in the middle of playing, often after a `/reload`. The 1.1.3 app could mistake an old line in WoW's log for a disconnect.

@@ -34,8 +34,11 @@ static class Farsight
 	const double SplitMinAspect = 3.0;
 	const int GameAspectWidth = 16;
 	const int GameAspectHeight = 9;
+	const long LogLimit = 1 << 20;
+	const string LogTimestamp = "yyyy-MM-dd HH:mm:ss.fff ";
 
 	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
+	static readonly string LogPath = Path.ChangeExtension(InstalledPath, ".log");
 	static readonly string StartupShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), Title + ".lnk");
 	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 	static readonly Regex PlacementSettings = new Regex("^SET Gx(WindowedResolution|Monitor) \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
@@ -168,6 +171,9 @@ static class Farsight
 		{
 			if (!firstInstance)
 				return;
+			if (File.Exists(LogPath) && new FileInfo(LogPath).Length > LogLimit)
+				File.Delete(LogPath);
+			Log("Started");
 			AddToStartup();
 			new Thread(WatchForeground) { IsBackground = true }.Start();
 			if (RunningGames().Any())
@@ -283,18 +289,27 @@ static class Farsight
 		var characterList = CharacterListWritten(gameDir, account);
 		var log = Path.Combine(gameDir, GameLog);
 		var logRead = File.Exists(log) ? new FileInfo(log).Length : 0;
-		var entered = DateTime.Now;
-		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList && !Logged(log, ref logRead, LeftWorldMarker, entered))
+		var since = DateTime.Now;
+		var leftWorld = false;
+		while (!game.HasExited && CharacterListWritten(gameDir, account) == characterList && !(leftWorld = Logged(log, ref logRead, LeftWorldMarker, since)))
 		{
+			if (GamesIn(gameDir).Any(other => other.Id != game.Id))
+				since = DateTime.Now;
 			if (MonitorsChanged(ref monitors))
 			{
 				span = WriteLayout(gameDir, monitors);
+				Log("Monitors changed in the world, stretching to " + span);
 				new Thread(() => Tell("Your screens changed, so Farsight stretched WoW over the new layout. Type /reload in WoW to finish.")) { IsBackground = true }.Start();
 			}
-			if (!IsPlaced(game.MainWindowHandle, span) && !Settle(game, span))
-				TellResizing();
+			if (!IsPlaced(game.MainWindowHandle, span))
+			{
+				Log("Window " + game.MainWindowHandle + " is at " + WindowRect(game.MainWindowHandle) + ", stretching it again");
+				if (!Settle(game, span))
+					TellResizing();
+			}
 			Thread.Sleep(PollInterval);
 		}
+		Log(game.HasExited ? "WoW closed" : leftWorld ? "Left the world (log)" : "Left the world (character list)");
 		Volatile.Write(ref spannedWindow, IntPtr.Zero);
 	}
 
@@ -356,7 +371,11 @@ static class Farsight
 	static void RunSession()
 	{
 		foreach (var running in RunningGames())
+		{
+			Log("Waiting for WoW " + running.Id + " to close");
 			running.WaitForExit();
+		}
+		Log("Waiting for WoW to start");
 		string gameDir;
 		var game = FindGame(out gameDir);
 		while (game == null)
@@ -366,8 +385,10 @@ static class Farsight
 			Thread.Sleep(IdleInterval);
 			game = FindGame(out gameDir);
 		}
+		Log("Found WoW " + game.Id + " in " + gameDir + ", window " + game.MainWindowHandle);
 		if (!CanControl(game))
 		{
+			Log("WoW is running as administrator");
 			Tell("WoW is running as administrator, so Farsight can't move its window. Close WoW and start it again without administrator rights.");
 			game.WaitForExit();
 			return;
@@ -406,6 +427,7 @@ static class Farsight
 		var monitors = MonitorBounds();
 		var span = WriteLayout(gameDir, monitors);
 		var since = DateTime.UtcNow;
+		Log("At character select, monitors " + string.Join(" ", monitors) + ", window " + game.MainWindowHandle);
 
 		if (!Settle(game, PrimaryBounds(monitors)))
 			TellResizing();
@@ -417,14 +439,19 @@ static class Farsight
 			if (MonitorsChanged(ref monitors))
 			{
 				span = WriteLayout(gameDir, monitors);
+				Log("Monitors changed at character select: " + string.Join(" ", monitors));
 				if (!Settle(game, PrimaryBounds(monitors)))
 					TellResizing();
 			}
 			entered = EnteredAccount(gameDir, account, since);
 		}
 		if (entered == null)
+		{
+			Log("WoW closed at character select");
 			return account;
+		}
 
+		Log("Entered the world, stretching window " + game.MainWindowHandle + " to " + span);
 		if (!Settle(game, span))
 			TellResizing();
 		HoldUntilLogout(game, gameDir, entered, monitors, span);
@@ -433,7 +460,13 @@ static class Farsight
 
 	static void TellResizing()
 	{
+		Log("WoW keeps resizing its window");
 		Tell("WoW keeps resizing its window. Set Display Mode to Windowed in the graphics options.");
+	}
+
+	static void Log(string message)
+	{
+		File.AppendAllText(LogPath, DateTime.Now.ToString(LogTimestamp) + message + Environment.NewLine);
 	}
 
 	static void Tell(string message)
@@ -596,10 +629,15 @@ static class Farsight
 
 	static bool IsPlaced(IntPtr window, Rectangle bounds)
 	{
+		var style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
+		return (style & Decorations) == 0 && WindowRect(window) == bounds;
+	}
+
+	static Rectangle WindowRect(IntPtr window)
+	{
 		RECT rect;
 		GetWindowRect(window, out rect);
-		var style = GetWindowLongPtr(window, GWL_STYLE).ToInt64();
-		return (style & Decorations) == 0 && Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom) == bounds;
+		return Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
 	}
 
 	static void Place(IntPtr window, Rectangle bounds)
