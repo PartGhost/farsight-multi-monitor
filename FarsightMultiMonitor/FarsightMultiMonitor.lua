@@ -466,6 +466,10 @@ applyViewport()
 hooksecurefunc("UpdateUIParentPosition", applyViewport)
 CinematicFrame:HookScript("OnHide", applyViewport)
 
+EventUtil.ContinueOnAddOnLoaded("Blizzard_BarbershopUI", function()
+	BarberShopFrame:SetAllPoints(UIParent)
+end)
+
 hooksecurefunc(InputUtil, "AnchorRegionToCursor", function(region, point)
 	local x, y = GetCursorPosition()
 	local scale = UIParent:GetEffectiveScale()

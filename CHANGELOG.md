@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.6 (addon only)
+
+- The barber shop opens on your game monitor. Before, it filled the whole stretched window, so with monitors of different sizes the Accept button could end up where no monitor shows it.
+
 ## 1.1.5 (addon and app)
 
 - Fixed the interface spreading across the wrong monitors after a `/reload`.
