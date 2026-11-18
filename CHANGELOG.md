@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.7 (addon only)
+
+- With OpenMap installed, the fullscreen map fits its monitor again. OpenMap set it back to your main monitor's size, so on a smaller monitor it ran off the screen and its minimize button could be out of reach.
+
 ## 1.1.6 (addon only)
 
 - The barber shop opens on your game monitor. Before, it filled the whole stretched window, so with monitors of different sizes the Accept button could end up where no monitor shows it.

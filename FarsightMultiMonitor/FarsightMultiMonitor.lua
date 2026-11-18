@@ -64,6 +64,7 @@ local fullWidth = false
 local positions
 local adopted = {}
 local restoring = false
+local fitting = false
 local dragged
 local moveStarts = {}
 local appliedCVars = {}
@@ -191,11 +192,19 @@ local function restore(frame)
 end
 
 local function fitMonitor(frame)
-	if not spanned or isLocked(frame) then
+	if not spanned or fitting or isLocked(frame) then
 		return
 	end
+	fitting = true
 	frame:SetScale(fitScale(frame, homeMonitor(frame)))
+	fitting = false
 	restore(frame)
+end
+
+local function keepFit(frame)
+	if isMaximized(frame) then
+		fitMonitor(frame)
+	end
 end
 
 local function clearFit(frame)
@@ -234,6 +243,8 @@ local function adopt(frame)
 	hooksecurefunc(frame, "SetPoint", restore)
 	if frame.UpdateMaximizedSize then
 		hooksecurefunc(frame, "UpdateMaximizedSize", fitMonitor)
+		hooksecurefunc(frame, "SetScale", keepFit)
+		frame:HookScript("OnSizeChanged", keepFit)
 		hooksecurefunc(frame, "Minimize", clearFit)
 		hooksecurefunc(frame, "SetAlpha", keepOpaque)
 		keepMainMonitorVisible(frame)
