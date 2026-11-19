@@ -2,6 +2,13 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.8 (addon only)
+
+- With OpenMap installed, the windowed map stays where you drop it. It used to jump to another monitor when moved or resized, or snap back to where it was. Drag it by its title bar: OpenMap puts it back if it's moved any other way.
+- When the map leaves full screen, it goes back to the size it had before, so Farsight and another map addon no longer fight over its size each time it opens.
+- Clicking another addon's drag handle inside a window leaves the drag to that addon.
+- Windows Farsight places are anchored to your main monitor, so addons that save and restore a window's position put it back in the right spot.
+
 ## 1.1.7 (addon only)
 
 - With OpenMap installed, the fullscreen map fits its monitor again. OpenMap set it back to your main monitor's size, so on a smaller monitor it ran off the screen and its minimize button could be out of reach.

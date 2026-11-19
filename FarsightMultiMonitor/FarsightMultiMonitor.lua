@@ -63,8 +63,10 @@ local spanned = false
 local fullWidth = false
 local positions
 local adopted = {}
+local restore
 local restoring = false
 local fitting = false
+local windowScales = {}
 local dragged
 local moveStarts = {}
 local appliedCVars = {}
@@ -149,6 +151,9 @@ local function applyViewport()
 			parked:SetParent(clipFrame)
 		end
 	end
+	for frame in pairs(adopted) do
+		restore(frame)
+	end
 end
 
 local function isLocked(frame)
@@ -174,7 +179,7 @@ local function shiftRoom(frame, monitorFrame)
 	return math.max(0, (monitorFrame:GetWidth() * monitorFrame:GetEffectiveScale() / frame:GetEffectiveScale() - frame:GetWidth()) / 2)
 end
 
-local function restore(frame)
+function restore(frame)
 	local position = positions[frame:GetName()]
 	local maximized = isMaximized(frame)
 	if not spanned or not (position or maximized) or restoring or moveStarts[frame] or isLocked(frame) then
@@ -186,7 +191,8 @@ local function restore(frame)
 		local monitorFrame = homeMonitor(frame)
 		frame:SetPoint("CENTER", monitorFrame, FarsightMultiMonitorDB.mapShift * shiftRoom(frame, monitorFrame), 0)
 	else
-		frame:SetPoint("TOPLEFT", screenFrame, "BOTTOMLEFT", position.left, position.top)
+		local toFrame = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
+		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.left - UIParent:GetLeft() * toFrame, position.top - UIParent:GetBottom() * toFrame)
 	end
 	restoring = false
 end
@@ -196,23 +202,27 @@ local function fitMonitor(frame)
 		return
 	end
 	fitting = true
+	windowScales[frame] = windowScales[frame] or frame:GetScale()
 	frame:SetScale(fitScale(frame, homeMonitor(frame)))
 	fitting = false
 	restore(frame)
 end
 
-local function keepFit(frame)
+local function keepPlace(frame)
 	if isMaximized(frame) then
 		fitMonitor(frame)
+	else
+		restore(frame)
 	end
 end
 
 local function clearFit(frame)
-	if isLocked(frame) then
+	local scale = windowScales[frame]
+	if not scale or isLocked(frame) then
 		return
 	end
-	frame:SetScale(spanned and FarsightMultiMonitorDB.mapScale or 1)
-	restore(frame)
+	windowScales[frame] = nil
+	frame:SetScale(scale)
 end
 
 local function onSideMonitor(frame)
@@ -241,10 +251,10 @@ local function adopt(frame)
 	adopted[frame] = true
 	frame:SetMovable(true)
 	hooksecurefunc(frame, "SetPoint", restore)
+	hooksecurefunc(frame, "SetScale", keepPlace)
 	if frame.UpdateMaximizedSize then
 		hooksecurefunc(frame, "UpdateMaximizedSize", fitMonitor)
-		hooksecurefunc(frame, "SetScale", keepFit)
-		frame:HookScript("OnSizeChanged", keepFit)
+		frame:HookScript("OnSizeChanged", keepPlace)
 		hooksecurefunc(frame, "Minimize", clearFit)
 		hooksecurefunc(frame, "SetAlpha", keepOpaque)
 		keepMainMonitorVisible(frame)
@@ -276,6 +286,19 @@ local function windowOf(frame)
 		parent = frame:GetParent()
 	end
 	return frame
+end
+
+local function handlesDrag(focus, window)
+	while focus do
+		if focus:GetScript("OnDragStart") then
+			return true
+		end
+		if focus == window then
+			return false
+		end
+		focus = focus:GetParent()
+	end
+	return false
 end
 
 local function nearestMonitor(x, y)
@@ -362,13 +385,13 @@ local function startScaling(map, grip)
 		FarsightMultiMonitorDB.mapScale = scale
 		position.left, position.top = left * startScale / scale, top * startScale / scale
 		map:SetScale(scale)
-		restore(map)
 	end)
 end
 
 local function setupMap()
 	local map = WorldMapFrame
 	adopt(map)
+	windowScales[map] = spanned and FarsightMultiMonitorDB.mapScale or 1
 	if not isMaximized(map) then
 		clearFit(map)
 	end
@@ -445,7 +468,7 @@ function handlers.GLOBAL_MOUSE_DOWN(button)
 		end
 		return
 	end
-	if frame:GetScript("OnDragStart") or not canMove(frame) then
+	if handlesDrag(focus, frame) or not canMove(frame) then
 		return
 	end
 	adopt(frame)
