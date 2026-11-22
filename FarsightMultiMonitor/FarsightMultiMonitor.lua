@@ -41,7 +41,7 @@ local monitorFrames = {}
 local backgrounds = {}
 local unionLeft, unionTop, unionRight, unionBottom = math.huge, math.huge, -math.huge, -math.huge
 for index, monitor in ipairs(layout.monitors) do
-	monitorKeys[index] = string.format("%dx%d+%d+%d", monitor.width, monitor.height, monitor.x, monitor.y)
+	monitorKeys[index] = string.format("%dx%d", monitor.width, monitor.height)
 	local monitorFrame = CreateFrame("Frame", nil, screenFrame)
 	monitorFrame:SetPoint("TOPLEFT", monitor.x, -monitor.y)
 	monitorFrame:SetSize(monitor.width, monitor.height)
@@ -64,7 +64,6 @@ local fullWidth = false
 local positions
 local adopted = {}
 local restore
-local restoring = false
 local fitting = false
 local windowScales = {}
 local dragged
@@ -164,6 +163,14 @@ local function isMaximized(frame)
 	return frame.IsMaximized and frame:IsMaximized()
 end
 
+local function pointIn(frame, region, point)
+	local left, bottom, width, height = region:GetRect()
+	local x = point:find("LEFT") and left or point:find("RIGHT") and left + width or left + width / 2
+	local y = point:find("TOP") and bottom + height or point:find("BOTTOM") and bottom or bottom + height / 2
+	local toFrame = region:GetEffectiveScale() / frame:GetEffectiveScale()
+	return x * toFrame, y * toFrame
+end
+
 local function homeMonitor(frame)
 	local position = positions[frame:GetName()]
 	return monitorFrames[position and position.monitor or mainIndex]
@@ -182,19 +189,19 @@ end
 function restore(frame)
 	local position = positions[frame:GetName()]
 	local maximized = isMaximized(frame)
-	if not spanned or not (position or maximized) or restoring or moveStarts[frame] or isLocked(frame) then
+	if not spanned or not (position or maximized) or moveStarts[frame] or isLocked(frame) then
 		return
 	end
-	restoring = true
-	frame:ClearAllPoints()
+	local methods = getmetatable(frame).__index
+	methods.ClearAllPoints(frame)
 	if maximized then
 		local monitorFrame = homeMonitor(frame)
-		frame:SetPoint("CENTER", monitorFrame, FarsightMultiMonitorDB.mapShift * shiftRoom(frame, monitorFrame), 0)
+		methods.SetPoint(frame, "CENTER", monitorFrame, FarsightMultiMonitorDB.mapShift * shiftRoom(frame, monitorFrame), 0)
 	else
+		local monitorLeft, monitorTop = pointIn(UIParent, monitorFrames[position.monitor], "TOPLEFT")
 		local toFrame = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
-		frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.left - UIParent:GetLeft() * toFrame, position.top - UIParent:GetBottom() * toFrame)
+		methods.SetPoint(frame, "TOPLEFT", UIParent, "BOTTOMLEFT", (monitorLeft + position.left - UIParent:GetLeft()) * toFrame, (monitorTop + position.top - UIParent:GetBottom()) * toFrame)
 	end
-	restoring = false
 end
 
 local function fitMonitor(frame)
@@ -324,7 +331,9 @@ local function savePosition(frame)
 	local left, top = frame:GetLeft(), frame:GetTop()
 	local scale = frame:GetEffectiveScale() / screenFrame:GetEffectiveScale()
 	local monitor, shiftX, shiftY = nearestMonitor((left + frame:GetWidth() / 2) * scale, layout.height - top * scale)
-	positions[frame:GetName()] = { left = left + shiftX / scale, top = top - shiftY / scale, monitor = monitor }
+	local toUI = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
+	local monitorLeft, monitorTop = pointIn(UIParent, monitorFrames[monitor], "TOPLEFT")
+	positions[frame:GetName()] = { left = (left + shiftX / scale) * toUI - monitorLeft, top = (top - shiftY / scale) * toUI - monitorTop, monitor = monitor }
 	frame:SetUserPlaced(false)
 	adopt(frame)
 	restore(frame)
@@ -346,7 +355,15 @@ for _, widgetType in ipairs(MOVABLE_TYPES) do
 		local x, y = GetCursorPosition()
 		if (x ~= start[1] or y ~= start[2]) and canMove(frame) then
 			savePosition(frame)
+			return
 		end
+		local point, relativeTo, relativePoint, offsetX, offsetY = frame:GetPoint(1)
+		if relativeTo or not point or isLocked(frame) then
+			return
+		end
+		local screenX, screenY = pointIn(frame, screenFrame, relativePoint)
+		local uiX, uiY = pointIn(frame, UIParent, relativePoint)
+		methods.SetPoint(frame, point, UIParent, relativePoint, offsetX + screenX - uiX, offsetY + screenY - uiY)
 	end)
 end
 
@@ -373,18 +390,15 @@ local function startScaling(map, grip)
 	if not positions[map:GetName()] then
 		savePosition(map)
 	end
-	local position = positions[map:GetName()]
 	local startX, startY = GetCursorPosition()
-	local startScale, left, top = map:GetScale(), position.left, position.top
+	local startScale = map:GetScale()
 	local width = map:GetWidth() * map:GetEffectiveScale()
 	local height = map:GetHeight() * map:GetEffectiveScale()
 	grip:SetScript("OnUpdate", function()
 		local x, y = GetCursorPosition()
 		local growth = ((width + x - startX) * width + (height + startY - y) * height) / (width * width + height * height)
-		local scale = Clamp(startScale * growth, MAP_MIN_SCALE, fitScale(map, homeMonitor(map)))
-		FarsightMultiMonitorDB.mapScale = scale
-		position.left, position.top = left * startScale / scale, top * startScale / scale
-		map:SetScale(scale)
+		map:SetScale(Clamp(startScale * growth, MAP_MIN_SCALE, fitScale(map, homeMonitor(map))))
+		FarsightMultiMonitorDB.mapScale = map:GetScale()
 	end)
 end
 

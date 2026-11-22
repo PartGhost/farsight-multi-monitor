@@ -2,6 +2,13 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.9 (addon and app)
+
+- With OpenMap installed, the windowed map stays where you put it. Farsight and OpenMap used to take turns moving it after fights, when it opened or when it was resized, so it jumped between two spots.
+- Panels remember which monitor they're on, so they stay put when Windows shifts your monitors by a few pixels. Spots saved by earlier versions don't carry over: drag your panels once after updating.
+- Frames you move in Edit Mode stay where you drop them. They used to land a whole monitor to the right after saving, often where no monitor shows them. A frame that already went missing needs resetting in Edit Mode.
+- If the app can't set itself up, it says why instead of closing without a word.
+
 ## 1.1.8 (addon only)
 
 - With OpenMap installed, the windowed map stays where you drop it. It used to jump to another monitor when moved or resized, or snap back to where it was. Drag it by its title bar: OpenMap puts it back if it's moved any other way.

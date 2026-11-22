@@ -185,15 +185,23 @@ static class Farsight
 
 	static void Install()
 	{
-		var self = Process.GetCurrentProcess().Id;
-		foreach (var running in Process.GetProcessesByName(Title).Where(process => process.Id != self))
+		try
 		{
-			running.Kill();
-			running.WaitForExit();
+			var self = Process.GetCurrentProcess().Id;
+			foreach (var running in Process.GetProcessesByName(Title).Where(process => process.Id != self))
+			{
+				running.Kill();
+				running.WaitForExit();
+			}
+			Directory.CreateDirectory(Path.GetDirectoryName(InstalledPath));
+			File.WriteAllBytes(InstalledPath, File.ReadAllBytes(Application.ExecutablePath));
+			Process.Start(InstalledPath);
 		}
-		Directory.CreateDirectory(Path.GetDirectoryName(InstalledPath));
-		File.WriteAllBytes(InstalledPath, File.ReadAllBytes(Application.ExecutablePath));
-		Process.Start(InstalledPath);
+		catch (Exception error)
+		{
+			Tell("Farsight couldn't set itself up: " + error.Message + "\n\nClose Farsight in Task Manager and run this again.");
+			return;
+		}
 		Tell(GameDirs().Any()
 			? "Farsight is set up. Start WoW as usual. You can delete this download."
 			: "Farsight is set up, but it can't find WoW with the Farsight Multi-Monitor addon installed. Install the addon and it will pick it up.");
