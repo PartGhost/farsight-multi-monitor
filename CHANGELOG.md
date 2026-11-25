@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.10 (addon only)
+
+- Edit Mode snaps to your main monitor's centre, edges and grid again, so frames line up. After switching game monitor or Widescreen from Farsight's panel, `/reload` before using Edit Mode.
+
 ## 1.1.9 (addon and app)
 
 - With OpenMap installed, the windowed map stays where you put it. Farsight and OpenMap used to take turns moving it after fights, when it opened or when it was resized, so it jumped between two spots.

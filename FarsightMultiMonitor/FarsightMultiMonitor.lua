@@ -511,7 +511,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 applyViewport()
-hooksecurefunc("UpdateUIParentPosition", applyViewport)
+hooksecurefunc(UIParent, "SetPoint", applyViewport)
 CinematicFrame:HookScript("OnHide", applyViewport)
 
 EventUtil.ContinueOnAddOnLoaded("Blizzard_BarbershopUI", function()
