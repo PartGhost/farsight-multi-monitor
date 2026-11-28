@@ -19,7 +19,7 @@ The app isn't code-signed, so Windows SmartScreen may warn you the first time. C
 ## What the app does
 
 - Copies itself to `%LOCALAPPDATA%\Farsight`, starts with Windows from a shortcut in your Startup folder, and waits in the background for WoW to open.
-- Finds WoW from the install location Battle.net saves in the Windows registry, and only touches game versions that have the addon.
+- Finds WoW from the install location in Battle.net's list of installed games, and only touches game versions that have the addon.
 - Sets the game's display mode to Windowed in `WTF\Config.wtf`, and clears the saved window size and monitor choice there.
 - Resizes the game window across your monitors and removes the title bar.
 - Writes your monitor layout to `Layout.lua` in the addon's folder, and again whenever your monitors change while WoW is open.

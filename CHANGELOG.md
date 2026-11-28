@@ -2,6 +2,10 @@
 
 Each entry says whether it changed the addon, the app, or both. When only the app changes, the addon download is the same as the version before.
 
+## 1.1.11 (app only)
+
+- The app finds WoW through Battle.net's own list of installed games, so it works on PCs where Battle.net didn't add WoW to Windows' installed apps.
+
 ## 1.1.10 (addon only)
 
 - Edit Mode snaps to your main monitor's centre, edges and grid again, so frames line up. After switching game monitor or Widescreen from Farsight's panel, `/reload` before using Edit Mode.

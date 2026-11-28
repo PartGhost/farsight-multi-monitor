@@ -17,8 +17,9 @@ static class Farsight
 	const string Title = "Farsight";
 	const string AddonFolder = @"Interface\AddOns\FarsightMultiMonitor";
 	const string LayoutFile = AddonFolder + @"\Layout.lua";
-	const string InstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\World of Warcraft";
-	const string InstallLocationValue = "InstallLocation";
+	const int InstallsField = 1;
+	const int InstallSettingsField = 3;
+	const int InstallPathField = 1;
 	const string GamePattern = "Wow*.exe";
 	const string ConfigFile = @"WTF\Config.wtf";
 	const string EnterWorldMarker = @"WTF\SavedVariables\Blizzard_GlueSavedVariables.lua";
@@ -39,7 +40,8 @@ static class Farsight
 
 	static readonly string InstalledPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Title, Title + ".exe");
 	static readonly string LogPath = Path.ChangeExtension(InstalledPath, ".log");
-	static readonly string StartupShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), Title + ".lnk");
+	static readonly string ProductDb = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Battle.net\Agent\product.db");
+	static readonly string StartupShortcut =Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), Title + ".lnk");
 	static readonly Regex MaximizeSetting = new Regex("^SET GxMaximize \"\\d\"", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 	static readonly Regex PlacementSettings = new Regex("^SET Gx(WindowedResolution|Monitor) \"[^\"]*\"\\r?\\n?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
@@ -219,14 +221,85 @@ static class Farsight
 
 	static string[] GameDirs()
 	{
-		using (var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
-		using (var install = machine.OpenSubKey(InstallKey))
+		return InstallRoots()
+			.SelectMany(Directory.GetDirectories)
+			.Where(dir => Directory.Exists(Path.Combine(dir, AddonFolder)))
+			.ToArray();
+	}
+
+	static string[] InstallRoots()
+	{
+		if (!File.Exists(ProductDb))
+			return new string[0];
+		try
 		{
-			var root = install == null ? null : install.GetValue(InstallLocationValue) as string;
-			if (!Directory.Exists(root))
-				return new string[0];
-			return Directory.GetDirectories(root).Where(dir => Directory.Exists(Path.Combine(dir, AddonFolder))).ToArray();
+			return Fields(File.ReadAllBytes(ProductDb), InstallsField)
+				.SelectMany(install => Fields(install, InstallSettingsField))
+				.SelectMany(settings => Fields(settings, InstallPathField))
+				.Select(path => Path.GetFullPath(Encoding.UTF8.GetString(path)))
+				.Where(Directory.Exists)
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToArray();
 		}
+		catch (IOException)
+		{
+			return new string[0];
+		}
+		catch (InvalidDataException)
+		{
+			return new string[0];
+		}
+	}
+
+	static System.Collections.Generic.IEnumerable<byte[]> Fields(byte[] message, int number)
+	{
+		var position = 0;
+		while (position < message.Length)
+		{
+			var key = ReadVarint(message, ref position);
+			switch (key & 7)
+			{
+				case 0:
+					ReadVarint(message, ref position);
+					break;
+				case 1:
+					position += 8;
+					break;
+				case 5:
+					position += 4;
+					break;
+				case 2:
+					var size = ReadVarint(message, ref position);
+					if (size > (ulong)(message.Length - position))
+						throw new InvalidDataException();
+					var length = (int)size;
+					if (key >> 3 == (ulong)number)
+					{
+						var field = new byte[length];
+						Array.Copy(message, position, field, 0, length);
+						yield return field;
+					}
+					position += length;
+					break;
+				default:
+					throw new InvalidDataException();
+			}
+		}
+	}
+
+	static ulong ReadVarint(byte[] message, ref int position)
+	{
+		ulong value = 0;
+		for (var shift = 0; shift < 64; shift += 7)
+		{
+			if (position >= message.Length)
+				throw new InvalidDataException();
+			var next = message[position++];
+			value |= (ulong)(next & 0x7f) << shift;
+			if (next < 0x80)
+				return value;
+		}
+		throw new InvalidDataException();
 	}
 
 	static void WatchForeground()
